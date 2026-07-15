@@ -1,0 +1,22 @@
+{
+  "name": "@frontstage/database",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"no unit tests in database package yet\""
+  },
+  "dependencies": {
+    "@prisma/client": "^6.0.0"
+  },
+  "devDependencies": {
+    "prisma": "^6.0.0",
+    "typescript": "^5.5.0"
+  }
+}

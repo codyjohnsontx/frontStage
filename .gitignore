@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.next/
+coverage/
+*.tsbuildinfo
+
+# environment
+.env
+.env.local
+.env.*.local
+
+# prisma
+packages/database/generated/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/settings.json

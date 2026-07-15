@@ -1,0 +1,353 @@
+// Frontstage Phase 0 schema: identity, tenancy, scoped authorization,
+// invitations, audit, outbox, jobs, feature flags, idempotency.
+//
+// Domain boundaries follow docs/domain-model.md. Client organizations,
+// portals, projections, deliverables, etc. arrive in Phase 1+ — this file
+// deliberately contains only what Phase 0 exit criteria require.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  name      String?
+  avatarUrl String?  @map("avatar_url")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  authAccounts        AuthAccount[]
+  sessions            Session[]
+  memberships         OrganizationMembership[]
+  invitationsSent     Invitation[]             @relation("InvitationInviter")
+  invitationsAccepted Invitation[]             @relation("InvitationAcceptor")
+
+  @@map("users")
+}
+
+enum AuthProvider {
+  GOOGLE
+  MICROSOFT
+
+  @@map("auth_provider")
+}
+
+model AuthAccount {
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  provider          AuthProvider
+  providerAccountId String       @map("provider_account_id")
+  createdAt         DateTime     @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("auth_accounts")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String    @unique
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  memberships        OrganizationMembership[]
+  invitations        Invitation[]
+  auditEvents        AuditEvent[]
+  idempotencyRecords IdempotencyRecord[]
+
+  @@map("organizations")
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+
+  @@map("membership_status")
+}
+
+model OrganizationMembership {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleAssignments ScopedRoleAssignment[]
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_memberships")
+}
+
+// ---------------------------------------------------------------------------
+// Authorization
+//
+// Role definitions (role -> permission bundles) live in code in
+// @frontstage/authorization (see docs/adr/0003). The database stores WHO has
+// WHICH role at WHAT scope. Custom roles later become a table without
+// changing this shape.
+// ---------------------------------------------------------------------------
+
+enum RoleKey {
+  ORGANIZATION_OWNER
+  ORGANIZATION_ADMIN
+  PORTAL_ADMIN
+  PROJECT_LEAD
+  CONTRIBUTOR
+  INTERNAL_VIEWER
+  CLIENT_ADMIN
+  CLIENT_APPROVER
+  CLIENT_CONTRIBUTOR
+  CLIENT_VIEWER
+
+  @@map("role_key")
+}
+
+enum ScopeType {
+  ORGANIZATION
+  CLIENT_ORGANIZATION
+  PORTAL
+  PROJECT
+
+  @@map("scope_type")
+}
+
+model ScopedRoleAssignment {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  membershipId   String    @map("membership_id") @db.Uuid
+  roleKey        RoleKey   @map("role_key")
+  scopeType      ScopeType @map("scope_type")
+  // Null for ORGANIZATION scope; otherwise the client org / portal / project id.
+  scopeId        String?   @map("scope_id") @db.Uuid
+  grantedById    String?   @map("granted_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  membership OrganizationMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, roleKey, scopeType, scopeId])
+  @@index([organizationId])
+  @@map("scoped_role_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Invitations — email-bound, single-use, expiring, revocable, audited.
+// ---------------------------------------------------------------------------
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+
+  @@map("invitation_status")
+}
+
+model Invitation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  email          String
+  roleKey        RoleKey          @map("role_key")
+  scopeType      ScopeType        @map("scope_type")
+  scopeId        String?          @map("scope_id") @db.Uuid
+  tokenHash      String           @unique @map("token_hash")
+  status         InvitationStatus @default(PENDING)
+  expiresAt      DateTime         @map("expires_at")
+  invitedById    String           @map("invited_by_id") @db.Uuid
+  acceptedById   String?          @map("accepted_by_id") @db.Uuid
+  acceptedAt     DateTime?        @map("accepted_at")
+  revokedAt      DateTime?        @map("revoked_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationInviter", fields: [invitedById], references: [id])
+  acceptedBy   User?        @relation("InvitationAcceptor", fields: [acceptedById], references: [id])
+
+  @@index([organizationId, status])
+  @@index([email])
+  @@map("invitations")
+}
+
+// ---------------------------------------------------------------------------
+// Audit — append-only (enforced by trigger in migration SQL).
+// ---------------------------------------------------------------------------
+
+enum ActorType {
+  USER
+  SYSTEM
+  INTEGRATION
+
+  @@map("actor_type")
+}
+
+model AuditEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  actorType      ActorType @map("actor_type")
+  actorUserId    String?   @map("actor_user_id") @db.Uuid
+  action         String
+  resourceType   String    @map("resource_type")
+  resourceId     String?   @map("resource_id")
+  correlationId  String?   @map("correlation_id")
+  metadata       Json      @default("{}")
+  ipAddress      String?   @map("ip_address")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, resourceType, resourceId])
+  @@map("audit_events")
+}
+
+// ---------------------------------------------------------------------------
+// Transactional outbox + PostgreSQL-backed job queue.
+// ---------------------------------------------------------------------------
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+
+  @@map("outbox_status")
+}
+
+model OutboxEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String?      @map("organization_id") @db.Uuid
+  eventType      String       @map("event_type")
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attempts       Int          @default(0)
+  nextAttemptAt  DateTime?    @map("next_attempt_at")
+  processedAt    DateTime?    @map("processed_at")
+  lastError      String?      @map("last_error")
+  correlationId  String?      @map("correlation_id")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@index([status, nextAttemptAt])
+  @@map("outbox_events")
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELED
+
+  @@map("job_status")
+}
+
+model Job {
+  id          String    @id @default(uuid()) @db.Uuid
+  queue       String    @default("default")
+  type        String
+  payload     Json
+  status      JobStatus @default(PENDING)
+  priority    Int       @default(0)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5) @map("max_attempts")
+  runAt       DateTime  @default(now()) @map("run_at")
+  lockedAt    DateTime? @map("locked_at")
+  lockedBy    String?   @map("locked_by")
+  lastError   String?   @map("last_error")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([queue, status, runAt, priority])
+  @@map("jobs")
+}
+
+// ---------------------------------------------------------------------------
+// Feature flags and idempotency.
+// ---------------------------------------------------------------------------
+
+model FeatureFlag {
+  id             String   @id @default(uuid()) @db.Uuid
+  key            String   @unique
+  description    String?
+  defaultEnabled Boolean  @default(false) @map("default_enabled")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  overrides FeatureFlagOverride[]
+
+  @@map("feature_flags")
+}
+
+enum FlagScopeType {
+  ENVIRONMENT
+  ORGANIZATION
+  PORTAL
+  USER
+
+  @@map("flag_scope_type")
+}
+
+model FeatureFlagOverride {
+  id        String        @id @default(uuid()) @db.Uuid
+  flagId    String        @map("flag_id") @db.Uuid
+  scopeType FlagScopeType @map("scope_type")
+  scopeId   String        @map("scope_id")
+  enabled   Boolean
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  flag FeatureFlag @relation(fields: [flagId], references: [id], onDelete: Cascade)
+
+  @@unique([flagId, scopeType, scopeId])
+  @@map("feature_flag_overrides")
+}
+
+model IdempotencyRecord {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  operation      String
+  key            String
+  requestHash    String   @map("request_hash")
+  resultType     String?  @map("result_type")
+  resultId       String?  @map("result_id")
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, operation, key])
+  @@map("idempotency_records")
+}

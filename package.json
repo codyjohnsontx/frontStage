@@ -1,0 +1,18 @@
+{
+  "name": "frontstage",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Frontstage — keep the work backstage, keep clients in the loop.",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @frontstage/database migrate:dev",
+    "db:generate": "pnpm --filter @frontstage/database generate"
+  }
+}
