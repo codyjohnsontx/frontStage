@@ -11,15 +11,14 @@ import {
   simulateSourceChange,
   startLinearOAuth,
 } from "@/server/integrations";
-import { PermissionDeniedError } from "@/server/authz";
+import { actionErrorMessage } from "@/server/errors";
 
 function pagePath(slug: string): string {
   return `/o/${slug}/integrations`;
 }
 
 function errorMessage(err: unknown, fallback: string): string {
-  if (err instanceof PermissionDeniedError) return "You do not have permission to manage integrations.";
-  return err instanceof Error ? err.message : fallback;
+  return actionErrorMessage(err, fallback, "You do not have permission to manage integrations.");
 }
 
 export async function connectFixtureAction(formData: FormData): Promise<void> {
@@ -49,6 +48,7 @@ export async function startOAuthAction(formData: FormData): Promise<void> {
     cookieStore.set("linear_oauth_state", result.state, {
       httpOnly: true,
       sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
       maxAge: 600,
       path: "/",
     });

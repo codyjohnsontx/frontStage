@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { createLogger } from "@frontstage/observability";
 import { auth } from "@/auth";
 import { completeLinearOAuth } from "@/server/integrations";
 import { getMyOrganizationBySlug, listMyOrganizations } from "@/server/organizations";
+
+const log = createLogger({ component: "web.integrations.callback" });
 
 /**
  * Linear OAuth callback. State was set as an HttpOnly cookie when the flow
@@ -42,9 +45,14 @@ export async function GET(request: Request): Promise<NextResponse> {
   try {
     await completeLinearOAuth(user, organizationId, code);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Linear connection failed.";
+    // Log the real exception server-side; never surface raw provider or
+    // database error text through the redirect.
+    log.error("linear_oauth_callback_failed", {
+      organizationId,
+      error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+    });
     return NextResponse.redirect(
-      `${appUrl}/o/${org.slug}/integrations?error=${encodeURIComponent(message)}`,
+      `${appUrl}/o/${org.slug}/integrations?error=${encodeURIComponent("Linear connection failed. Check the server logs and try reconnecting.")}`,
     );
   }
   return NextResponse.redirect(`${appUrl}/o/${org.slug}/integrations?connected=1`);

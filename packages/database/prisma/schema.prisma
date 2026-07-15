@@ -373,6 +373,9 @@ model IntegrationConnection {
   sourceObjects SourceObject[]
 
   @@unique([organizationId, provider])
+  // One provider workspace connects to at most one organization, so webhook
+  // workspace->connection resolution is deterministic. NULLs don't collide.
+  @@unique([provider, workspaceId])
   @@map("integration_connections")
 }
 
@@ -527,6 +530,7 @@ model SourceLink {
   sourceObject    SourceObject    @relation(fields: [sourceObjectId], references: [id], onDelete: Cascade)
 
   @@unique([externalProjectId, sourceObjectId])
+  @@index([organizationId])
   @@map("source_links")
 }
 
@@ -555,6 +559,7 @@ model ExternalWorkItem {
   sourceObject    SourceObject    @relation(fields: [sourceObjectId], references: [id], onDelete: Cascade)
 
   @@unique([externalProjectId, sourceObjectId])
+  @@index([organizationId])
   @@map("external_work_items")
 }
 
@@ -568,9 +573,12 @@ model ExternalProjectVersion {
   publishedById     String   @map("published_by_id") @db.Uuid
   publishedAt       DateTime @default(now()) @map("published_at")
 
-  externalProject ExternalProject @relation(fields: [externalProjectId], references: [id], onDelete: Cascade)
+  // Restrict, not Cascade: published snapshots are immutable client history
+  // (§6.3). Removing a project means archiving it, never deleting snapshots.
+  externalProject ExternalProject @relation(fields: [externalProjectId], references: [id], onDelete: Restrict)
 
   @@unique([externalProjectId, version])
+  @@index([organizationId])
   @@map("external_project_versions")
 }
 

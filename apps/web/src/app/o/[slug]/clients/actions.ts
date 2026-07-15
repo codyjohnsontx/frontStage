@@ -5,15 +5,14 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/server/session";
 import { getMyOrganizationBySlug } from "@/server/organizations";
 import { createClientOrganization, createPortal } from "@/server/clients";
-import { PermissionDeniedError } from "@/server/authz";
+import { actionErrorMessage } from "@/server/errors";
 
 function pagePath(slug: string): string {
   return `/o/${slug}/clients`;
 }
 
 function errorMessage(err: unknown, fallback: string): string {
-  if (err instanceof PermissionDeniedError) return "You do not have permission to manage clients and portals.";
-  return err instanceof Error ? err.message : fallback;
+  return actionErrorMessage(err, fallback, "You do not have permission to manage clients and portals.");
 }
 
 export async function createClientAction(formData: FormData): Promise<void> {

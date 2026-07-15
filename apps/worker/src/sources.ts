@@ -73,26 +73,52 @@ export async function upsertIssueSource(
   }
 
   if (existing.contentHash !== hash) {
-    await prisma.sourceObject.update({
-      where: { id: existing.id },
-      data: {
-        title: item.title,
-        stateType: item.stateType,
-        stateName: item.stateName,
-        parentExternalId: item.projectId ?? null,
-        data: item as unknown as object,
-        contentHash: hash,
-        archivedAt: item.archived ? (existing.archivedAt ?? seenAt) : null,
-        lastSeenAt: seenAt,
-        snapshots: { create: { data: item as unknown as object, contentHash: hash } },
-      },
-    });
-    const flagged = await prisma.externalWorkItem.updateMany({
-      where: { sourceObjectId: existing.id, curatedHash: { not: hash } },
-      data: { sourceChanged: true, ...(item.archived ? { archivedFromSource: true } : {}) },
+    // One transaction: the source update + snapshot and the projection
+    // flagging must commit together or not at all.
+    const flaggedCount = await prisma.$transaction(async (tx) => {
+      await tx.sourceObject.update({
+        where: { id: existing.id },
+        data: {
+          title: item.title,
+          stateType: item.stateType,
+          stateName: item.stateName,
+          parentExternalId: item.projectId ?? null,
+          data: item as unknown as object,
+          contentHash: hash,
+          archivedAt: item.archived ? (existing.archivedAt ?? seenAt) : null,
+          lastSeenAt: seenAt,
+          snapshots: { create: { data: item as unknown as object, contentHash: hash } },
+        },
+      });
+      const flagged = await tx.externalWorkItem.updateMany({
+        where: { sourceObjectId: existing.id, curatedHash: { not: hash } },
+        data: { sourceChanged: true },
+      });
+      // Archive state always tracks the source, both directions — a
+      // reactivated item must not stay marked as archived.
+      await tx.externalWorkItem.updateMany({
+        where: { sourceObjectId: existing.id },
+        data: { archivedFromSource: item.archived ?? false },
+      });
+      return flagged.count;
     });
     counts.updated += 1;
-    counts.flagged += flagged.count;
+    counts.flagged += flaggedCount;
+    return;
+  }
+
+  // Unchanged content — but clear archive state if the item reappeared.
+  if (!item.archived && existing.archivedAt !== null) {
+    await prisma.$transaction([
+      prisma.sourceObject.update({
+        where: { id: existing.id },
+        data: { lastSeenAt: seenAt, archivedAt: null },
+      }),
+      prisma.externalWorkItem.updateMany({
+        where: { sourceObjectId: existing.id },
+        data: { archivedFromSource: false },
+      }),
+    ]);
     return;
   }
 
@@ -185,14 +211,16 @@ export async function syncConnection(
       select: { id: true },
     });
     for (const s of stale) {
-      await prisma.sourceObject.update({
-        where: { id: s.id },
-        data: { archivedAt: syncStart },
-      });
-      await prisma.externalWorkItem.updateMany({
-        where: { sourceObjectId: s.id },
-        data: { archivedFromSource: true, sourceChanged: true },
-      });
+      await prisma.$transaction([
+        prisma.sourceObject.update({
+          where: { id: s.id },
+          data: { archivedAt: syncStart },
+        }),
+        prisma.externalWorkItem.updateMany({
+          where: { sourceObjectId: s.id },
+          data: { archivedFromSource: true, sourceChanged: true },
+        }),
+      ]);
     }
 
     await prisma.integrationConnection.update({

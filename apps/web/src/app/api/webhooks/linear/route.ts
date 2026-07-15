@@ -30,6 +30,23 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const dedupeKey =
     verified.deliveryId ?? createHash("sha256").update(rawBody).digest("hex");
+
+  // Persist only the allowlisted minimum the worker needs (workspace id +
+  // object id); raw webhook bodies must not become a copy of the customer's
+  // workspace (§54). The worker re-fetches current state from the API.
+  const raw = verified.payload as {
+    type?: string;
+    action?: string;
+    organizationId?: string;
+    data?: { id?: string };
+  };
+  const minimalPayload = {
+    type: raw.type ?? null,
+    action: raw.action ?? null,
+    organizationId: raw.organizationId ?? null,
+    data: { id: raw.data?.id ?? null },
+  };
+
   const prisma = getPrisma();
   try {
     // webhook_events + jobs are infrastructure tables (not org-RLS'd);
@@ -40,7 +57,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           provider: "LINEAR",
           dedupeKey,
           eventType: verified.eventType ?? "unknown",
-          payload: verified.payload as object,
+          payload: minimalPayload,
         },
       });
       await enqueueJob(tx, {

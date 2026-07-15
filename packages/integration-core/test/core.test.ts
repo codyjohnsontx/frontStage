@@ -70,7 +70,10 @@ describe("token crypto", () => {
     expect(() => decryptToken(tampered, key)).toThrow();
   });
 
-  it("rejects wrong-size keys", () => {
-    expect(() => encryptToken("x", Buffer.from("short").toString("base64"))).toThrow(/32 bytes/);
+  it("rejects wrong-size keys on encrypt AND decrypt (e.g. malformed rotated key)", () => {
+    const shortKey = Buffer.from("short").toString("base64");
+    expect(() => encryptToken("x", shortKey)).toThrow(/32 bytes/);
+    const encrypted = encryptToken("x", key);
+    expect(() => decryptToken(encrypted, shortKey)).toThrow(/32 bytes/);
   });
 });

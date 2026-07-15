@@ -7,7 +7,7 @@ import type {
   VerifiedWebhookEvent,
   WorkSystemAdapter,
 } from "@frontstage/integration-core";
-import { fetchAllIssues, fetchAllProjects } from "./graphql";
+import { fetchAllIssues, fetchAllProjects, fetchIssueById, fetchProjectById } from "./graphql";
 import { FIXTURE_ISSUES, FIXTURE_PROJECTS } from "./fixtures";
 
 export { buildAuthorizeUrl, exchangeCodeForToken, type LinearOAuthConfig } from "./oauth";
@@ -56,11 +56,6 @@ export function verifyLinearWebhook(
   return result;
 }
 
-function requireToken(auth: ConnectionAuth): string {
-  if (!auth.accessToken) throw new Error("Linear connection has no access token");
-  return auth.accessToken;
-}
-
 export function createLinearAdapter(options: { webhookSigningSecret?: string } = {}): WorkSystemAdapter {
   return {
     provider: "linear",
@@ -77,7 +72,7 @@ export function createLinearAdapter(options: { webhookSigningSecret?: string } =
 
     async listProjects(auth): Promise<CanonicalProject[]> {
       if (auth.mode === "fixture") return structuredClone(FIXTURE_PROJECTS);
-      return fetchAllProjects(requireToken(auth));
+      return fetchAllProjects(auth.accessToken);
     },
 
     async listWorkItems(auth, projectId): Promise<CanonicalWorkItem[]> {
@@ -85,17 +80,21 @@ export function createLinearAdapter(options: { webhookSigningSecret?: string } =
         const all = structuredClone(FIXTURE_ISSUES);
         return projectId ? all.filter((i) => i.projectId === projectId) : all;
       }
-      return fetchAllIssues(requireToken(auth), projectId);
+      return fetchAllIssues(auth.accessToken, projectId);
     },
 
     async getProject(auth, id): Promise<CanonicalProject | null> {
-      const projects = await this.listProjects(auth);
-      return projects.find((p) => p.id === id) ?? null;
+      if (auth.mode === "fixture") {
+        return structuredClone(FIXTURE_PROJECTS.find((p) => p.id === id) ?? null);
+      }
+      return fetchProjectById(auth.accessToken, id);
     },
 
     async getWorkItem(auth, id): Promise<CanonicalWorkItem | null> {
-      const items = await this.listWorkItems(auth);
-      return items.find((i) => i.id === id) ?? null;
+      if (auth.mode === "fixture") {
+        return structuredClone(FIXTURE_ISSUES.find((i) => i.id === id) ?? null);
+      }
+      return fetchIssueById(auth.accessToken, id);
     },
 
     verifyWebhook(rawBody, headers): VerifiedWebhookEvent {

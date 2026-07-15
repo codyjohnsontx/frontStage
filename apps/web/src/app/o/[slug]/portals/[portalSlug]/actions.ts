@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/server/session";
 import { getMyOrganizationBySlug } from "@/server/organizations";
 import { createDraftFromSource } from "@/server/projections";
-import { PermissionDeniedError } from "@/server/authz";
+import { actionErrorMessage } from "@/server/errors";
 
 export async function createDraftAction(formData: FormData): Promise<void> {
   const user = await requireUser();
@@ -20,12 +20,11 @@ export async function createDraftAction(formData: FormData): Promise<void> {
   try {
     identifier = await createDraftFromSource(user, org.id, portalId, sourceObjectId);
   } catch (err) {
-    const message =
-      err instanceof PermissionDeniedError
-        ? "You do not have permission to create projections."
-        : err instanceof Error
-          ? err.message
-          : "Could not create the draft.";
+    const message = actionErrorMessage(
+      err,
+      "Could not create the draft.",
+      "You do not have permission to create projections.",
+    );
     redirect(`/o/${slug}/portals/${portalSlug}?error=${encodeURIComponent(message)}`);
   }
   revalidatePath(`/o/${slug}/portals/${portalSlug}`);

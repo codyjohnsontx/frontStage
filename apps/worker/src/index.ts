@@ -65,16 +65,29 @@ async function main(): Promise<void> {
           where: { status: { not: "DISCONNECTED" } },
           select: { id: true },
         });
+        let scheduled = 0;
         for (const c of connections) {
+          // At most one queued/running sync per connection — reconciliation
+          // must never pile up behind a slow or failing sync.
+          const pending = await prisma.job.findFirst({
+            where: {
+              type: "integration.sync",
+              status: { in: ["PENDING", "RUNNING"] },
+              payload: { path: ["data", "connectionId"], equals: c.id },
+            },
+            select: { id: true },
+          });
+          if (pending) continue;
           await prisma.job.create({
             data: {
               type: "integration.sync",
               payload: { correlationId: null, data: { connectionId: c.id } },
             },
           });
+          scheduled += 1;
         }
-        if (connections.length > 0) {
-          log.info("reconciliation_scheduled", { connections: connections.length });
+        if (scheduled > 0) {
+          log.info("reconciliation_scheduled", { connections: scheduled });
         }
       }
       const drained = await drainOutbox(prisma, outboxRoutes, log);

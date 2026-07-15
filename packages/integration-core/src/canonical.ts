@@ -56,19 +56,18 @@ export interface AdapterCapabilities {
   attachments: boolean;
 }
 
-/** Decrypted credentials handed to an adapter call. Adapters never touch the DB. */
-export interface ConnectionAuth {
-  mode: "oauth" | "fixture";
-  accessToken?: string;
-}
+/**
+ * Decrypted credentials handed to an adapter call. Adapters never touch the
+ * DB. Discriminated union: an oauth auth without a token cannot compile.
+ */
+export type ConnectionAuth =
+  | { mode: "fixture" }
+  | { mode: "oauth"; accessToken: string };
 
-export interface VerifiedWebhookEvent {
-  ok: boolean;
-  reason?: string;
-  eventType?: string;
-  deliveryId?: string;
-  payload?: unknown;
-}
+/** Discriminated union: a successful verification always carries a payload. */
+export type VerifiedWebhookEvent =
+  | { ok: true; payload: unknown; eventType?: string; deliveryId?: string }
+  | { ok: false; reason: string };
 
 export interface WorkSystemAdapter {
   provider: Provider;

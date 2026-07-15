@@ -59,10 +59,16 @@ export default async function IntegrationsPage({
                 : "first sync pending"}
             </p>
             {connection.lastError && <div className="error-banner">{connection.lastError}</div>}
-            <form action={syncNowAction} style={{ display: "inline" }}>
+            <form action={syncNowAction} style={{ display: "inline", marginRight: "0.5rem" }}>
               <input type="hidden" name="slug" value={org.slug} />
               <button type="submit" className="secondary">Sync now</button>
             </form>
+            {linearOAuthConfigured() && connection.status !== "ACTIVE" && (
+              <form action={startOAuthAction} style={{ display: "inline" }}>
+                <input type="hidden" name="slug" value={org.slug} />
+                <button type="submit">Reconnect Linear</button>
+              </form>
+            )}
           </>
         ) : (
           <>

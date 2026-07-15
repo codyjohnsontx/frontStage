@@ -2,7 +2,7 @@
 
 Phases follow the master brief (§63). Exit criteria are quoted per phase.
 
-## Phase 0 — Foundation (current)
+## Phase 0 — Foundation (complete)
 
 Monorepo, Docker dev env, Postgres, Prisma, auth (Google/Microsoft),
 organizations, memberships, org switcher, invitations, capability

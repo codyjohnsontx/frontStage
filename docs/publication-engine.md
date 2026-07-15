@@ -2,7 +2,7 @@
 
 ## Model
 
-```
+```text
 SourceObject (Linear project/issue, canonical + content hash + snapshots)
    ↑ source_links (primary marked)          ↑ external_work_items.sourceObjectId
 ExternalProject (APEX-PRJ-001, client name/summary/health, DRAFT→PUBLISHED→ARCHIVED)

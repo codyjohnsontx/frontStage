@@ -7,6 +7,13 @@ import type {
 
 const GRAPHQL_URL = "https://api.linear.app/graphql";
 
+/** Hung provider requests abort instead of blocking a worker slot forever. */
+export const LINEAR_REQUEST_TIMEOUT_MS = 15_000;
+
+export function linearRequestSignal(): AbortSignal {
+  return AbortSignal.timeout(LINEAR_REQUEST_TIMEOUT_MS);
+}
+
 async function gql<T>(accessToken: string, query: string, variables: Record<string, unknown>): Promise<T> {
   const res = await fetch(GRAPHQL_URL, {
     method: "POST",
@@ -15,9 +22,13 @@ async function gql<T>(accessToken: string, query: string, variables: Record<stri
       Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({ query, variables }),
+    signal: linearRequestSignal(),
   });
   if (res.status === 429) {
-    throw new Error("Linear rate limit hit (429); job retry/backoff will reschedule");
+    const retryAfter = res.headers.get("retry-after");
+    throw new Error(
+      `Linear rate limit hit (429${retryAfter ? `, retry-after: ${retryAfter}s` : ""}); job retry/backoff will reschedule`,
+    );
   }
   if (!res.ok) {
     throw new Error(`Linear GraphQL error: ${res.status} ${await res.text()}`);
@@ -147,7 +158,7 @@ export async function fetchAllIssues(
       }`,
       {
         after: cursor,
-        filter: projectId ? { project: { id: { eq: projectId } } } : undefined,
+        filter: projectId ? { project: { id: { eq: projectId } } } : null,
       },
     );
     issues.push(...data.issues.nodes.map((n) => toCanonicalWorkItem(issueNode.parse(n))));
@@ -155,6 +166,43 @@ export async function fetchAllIssues(
     cursor = page.hasNextPage ? page.endCursor : null;
   } while (cursor);
   return issues;
+}
+
+const ISSUE_FIELDS = `
+  id identifier title description priority estimate url updatedAt archivedAt
+  project { id }
+  assignee { name }
+  state { name type }
+  labels { nodes { name } }
+`;
+
+/** Single-entity fetches for webhook processing — no full-collection scans. */
+export async function fetchProjectById(
+  accessToken: string,
+  id: string,
+): Promise<CanonicalProject | null> {
+  const data = await gql<{ project: unknown | null }>(
+    accessToken,
+    `query Project($id: String!) {
+      project(id: $id) { id name description state targetDate url updatedAt }
+    }`,
+    { id },
+  );
+  return data.project ? toCanonicalProject(projectNode.parse(data.project)) : null;
+}
+
+export async function fetchIssueById(
+  accessToken: string,
+  id: string,
+): Promise<CanonicalWorkItem | null> {
+  const data = await gql<{ issue: unknown | null }>(
+    accessToken,
+    `query Issue($id: String!) {
+      issue(id: $id) { ${ISSUE_FIELDS} }
+    }`,
+    { id },
+  );
+  return data.issue ? toCanonicalWorkItem(issueNode.parse(data.issue)) : null;
 }
 
 export async function fetchViewerWorkspace(

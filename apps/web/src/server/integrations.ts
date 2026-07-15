@@ -4,6 +4,7 @@ import { encryptToken } from "@frontstage/integration-core";
 import { buildAuthorizeUrl, exchangeCodeForToken, fetchViewerWorkspace, FIXTURE_WORKSPACE } from "@frontstage/linear-adapter";
 import { createLogger, newCorrelationId } from "@frontstage/observability";
 import type { SessionUser } from "@/server/session";
+import { ValidationError } from "@/server/errors";
 import { assertPermission, loadAuthorizationContext } from "@/server/authz";
 import { recordAuditEvent } from "@/server/audit";
 import { enqueueJob } from "@/server/jobs";
@@ -29,7 +30,7 @@ function oauthConfig() {
 export async function getLinearConnection(user: SessionUser, organizationId: string) {
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     const connection = await tx.integrationConnection.findFirst({
       where: { organizationId, provider: "LINEAR" },
     });
@@ -57,18 +58,18 @@ export async function connectFixtureWorkspace(
   user: SessionUser,
   organizationId: string,
 ): Promise<void> {
-  if (!devFixtureEnabled) throw new Error("Fixture connections are disabled.");
+  if (!devFixtureEnabled) throw new ValidationError("Fixture connections are disabled.");
   const correlationId = newCorrelationId();
 
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     assertPermission(context, "integrations.manage", { organizationId });
 
     const existing = await tx.integrationConnection.findFirst({
       where: { organizationId, provider: "LINEAR" },
     });
-    if (existing) throw new Error("A Linear connection already exists for this organization.");
+    if (existing) throw new ValidationError("A Linear connection already exists for this organization.");
 
     const connection = await tx.integrationConnection.create({
       data: {
@@ -76,7 +77,9 @@ export async function connectFixtureWorkspace(
         provider: "LINEAR",
         mode: "fixture",
         status: "ACTIVE",
-        workspaceId: FIXTURE_WORKSPACE.id,
+        // Per-org suffix: (provider, workspaceId) is unique so real
+        // workspaces map to exactly one org; fixtures must not collide.
+        workspaceId: `${FIXTURE_WORKSPACE.id}-${organizationId.slice(0, 8)}`,
         workspaceName: FIXTURE_WORKSPACE.name,
         scopes: ["read", "write"],
       },
@@ -104,10 +107,10 @@ export async function startLinearOAuth(
   user: SessionUser,
   organizationId: string,
 ): Promise<{ authorizeUrl: string; state: string }> {
-  if (!linearOAuthConfigured()) throw new Error("LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET are not set.");
+  if (!linearOAuthConfigured()) throw new ValidationError("LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET are not set.");
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     assertPermission(context, "integrations.manage", { organizationId });
   });
   const state = `${organizationId}.${randomUUID()}`;
@@ -121,14 +124,14 @@ export async function completeLinearOAuth(
   code: string,
 ): Promise<void> {
   const key = process.env.INTEGRATION_TOKEN_KEY;
-  if (!key) throw new Error("INTEGRATION_TOKEN_KEY is not set.");
+  if (!key) throw new ValidationError("INTEGRATION_TOKEN_KEY is not set.");
   const token = await exchangeCodeForToken(oauthConfig(), code);
   const workspace = await fetchViewerWorkspace(token.accessToken);
   const correlationId = newCorrelationId();
 
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     assertPermission(context, "integrations.manage", { organizationId });
 
     const data = {
@@ -171,12 +174,12 @@ export async function requestSync(user: SessionUser, organizationId: string): Pr
   const correlationId = newCorrelationId();
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     assertPermission(context, "integrations.manage", { organizationId });
     const connection = await tx.integrationConnection.findFirst({
       where: { organizationId, provider: "LINEAR" },
     });
-    if (!connection) throw new Error("No Linear connection to sync.");
+    if (!connection) throw new ValidationError("No Linear connection to sync.");
     await enqueueJob(tx, {
       type: "integration.sync",
       data: { connectionId: connection.id, organizationId },
@@ -202,18 +205,18 @@ export async function simulateSourceChange(
   organizationId: string,
   sourceObjectId: string,
 ): Promise<void> {
-  if (!devFixtureEnabled) throw new Error("Simulation is disabled.");
+  if (!devFixtureEnabled) throw new ValidationError("Simulation is disabled.");
   const correlationId = newCorrelationId();
 
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     assertPermission(context, "integrations.manage", { organizationId });
 
     const source = await tx.sourceObject.findFirst({
       where: { id: sourceObjectId, organizationId, type: "ISSUE" },
     });
-    if (!source) throw new Error("Source issue not found.");
+    if (!source) throw new ValidationError("Source issue not found.");
 
     const current = source.data as Record<string, unknown>;
     const nextState =
@@ -257,7 +260,7 @@ export async function simulateSourceChange(
 export async function listSourceIssues(user: SessionUser, organizationId: string) {
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     return tx.sourceObject.findMany({
       where: { organizationId, type: "ISSUE", archivedAt: null },
       orderBy: { title: "asc" },

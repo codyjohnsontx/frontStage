@@ -46,6 +46,7 @@ export async function exchangeCodeForToken(
       grant_type: "authorization_code",
       code,
     }),
+    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
     throw new Error(`Linear token exchange failed: ${res.status} ${await res.text()}`);

@@ -10,15 +10,14 @@ import {
   setWorkItemCuration,
   updateProjectionDraft,
 } from "@/server/projections";
-import { PermissionDeniedError } from "@/server/authz";
+import { actionErrorMessage } from "@/server/errors";
 
 function editorPath(slug: string, portalSlug: string, identifier: string): string {
   return `/o/${slug}/portals/${portalSlug}/projects/${identifier}`;
 }
 
 function errorMessage(err: unknown, fallback: string): string {
-  if (err instanceof PermissionDeniedError) return "You do not have permission for that action.";
-  return err instanceof Error ? err.message : fallback;
+  return actionErrorMessage(err, fallback, "You do not have permission for that action.");
 }
 
 async function resolveOrg(slug: string) {

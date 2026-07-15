@@ -17,6 +17,7 @@ export function encryptToken(plaintext: string, base64Key: string): string {
 
 export function decryptToken(encrypted: string, base64Key: string): string {
   const key = Buffer.from(base64Key, "base64");
+  if (key.length !== 32) throw new Error("INTEGRATION_TOKEN_KEY must be 32 bytes (base64)");
   const [ivB64, dataB64, tagB64] = encrypted.split(".");
   if (!ivB64 || !dataB64 || !tagB64) throw new Error("Malformed encrypted token");
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(ivB64, "base64"));

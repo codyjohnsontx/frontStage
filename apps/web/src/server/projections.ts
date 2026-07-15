@@ -1,6 +1,7 @@
 import { getPrisma, withRlsContext, type TransactionClient } from "@frontstage/database";
 import { createLogger, newCorrelationId } from "@frontstage/observability";
 import type { SessionUser } from "@/server/session";
+import { ValidationError } from "@/server/errors";
 import { assertPermission, loadAuthorizationContext } from "@/server/authz";
 import { recordAuditEvent } from "@/server/audit";
 import {
@@ -28,7 +29,7 @@ export async function listAvailableProjectSources(
 ) {
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     const linked = await tx.sourceLink.findMany({
       where: { organizationId, externalProject: { portalId } },
       select: { sourceObjectId: true },
@@ -56,19 +57,19 @@ export async function createDraftFromSource(
 
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     assertPermission(context, "project.create", { organizationId, portalId });
 
     const portal = await tx.portal.findFirst({
       where: { id: portalId, organizationId },
       include: { clientOrganization: true },
     });
-    if (!portal) throw new Error("Portal not found.");
+    if (!portal) throw new ValidationError("Portal not found.");
 
     const source = await tx.sourceObject.findFirst({
       where: { id: sourceObjectId, organizationId, type: "PROJECT" },
     });
-    if (!source) throw new Error("Source project not found. Run a sync first.");
+    if (!source) throw new ValidationError("Source project not found. Run a sync first.");
 
     // Atomically claim the next identifier number for this client.
     const client = await tx.clientOrganization.update({
@@ -102,6 +103,7 @@ export async function createDraftFromSource(
     const issues = await tx.sourceObject.findMany({
       where: {
         organizationId,
+        connectionId: source.connectionId,
         type: "ISSUE",
         parentExternalId: source.externalId,
         archivedAt: null,
@@ -141,7 +143,7 @@ export async function getProjectionDetail(
 ) {
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     const project = await tx.externalProject.findFirst({
       where: { organizationId, identifier },
       include: {
@@ -165,14 +167,14 @@ export async function updateProjectionDraft(
   fields: { name?: string; summary?: string; health?: string },
 ): Promise<void> {
   if (fields.health && !(HEALTH_VALUES as readonly string[]).includes(fields.health)) {
-    throw new Error("Invalid health value.");
+    throw new ValidationError("Invalid health value.");
   }
   const correlationId = newCorrelationId();
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     const project = await tx.externalProject.findFirst({ where: { organizationId, identifier } });
-    if (!project) throw new Error("Projection not found.");
+    if (!project) throw new ValidationError("Projection not found.");
     assertPermission(context, "project.edit", {
       organizationId,
       portalId: project.portalId,
@@ -208,12 +210,12 @@ export async function setWorkItemCuration(
   const correlationId = newCorrelationId();
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     const item = await tx.externalWorkItem.findFirst({
       where: { id: workItemId, organizationId },
       include: { externalProject: true },
     });
-    if (!item) throw new Error("Work item not found.");
+    if (!item) throw new ValidationError("Work item not found.");
     assertPermission(context, "project.edit", {
       organizationId,
       portalId: item.externalProject.portalId,
@@ -256,12 +258,12 @@ export async function resolveSourceChange(
   const correlationId = newCorrelationId();
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     const item = await tx.externalWorkItem.findFirst({
       where: { id: workItemId, organizationId },
       include: { externalProject: true, sourceObject: true },
     });
-    if (!item) throw new Error("Work item not found.");
+    if (!item) throw new ValidationError("Work item not found.");
     assertPermission(context, "project.edit", {
       organizationId,
       portalId: item.externalProject.portalId,
@@ -300,7 +302,7 @@ async function buildClientView(
       workItems: { include: { sourceObject: true }, orderBy: { createdAt: "asc" } },
     },
   });
-  if (!project) throw new Error("Projection not found.");
+  if (!project) throw new ValidationError("Projection not found.");
 
   const items: InternalWorkItemData[] = project.workItems.map((w) => ({
     id: w.id,
@@ -325,7 +327,7 @@ export async function previewClientView(
 ): Promise<ClientProjectView> {
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     return buildClientView(tx, organizationId, identifier);
   });
 }
@@ -343,9 +345,9 @@ export async function publishProjection(
   const correlationId = newCorrelationId();
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     const project = await tx.externalProject.findFirst({ where: { organizationId, identifier } });
-    if (!project) throw new Error("Projection not found.");
+    if (!project) throw new ValidationError("Projection not found.");
     assertPermission(context, "project.publish", {
       organizationId,
       portalId: project.portalId,
@@ -389,7 +391,7 @@ export async function getPublishedSnapshot(
 ): Promise<{ version: number; publishedAt: Date; snapshot: ClientProjectView } | null> {
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
-    if (!context) throw new Error("Not a member of this organization.");
+    if (!context) throw new ValidationError("Not a member of this organization.");
     const project = await tx.externalProject.findFirst({ where: { organizationId, identifier } });
     if (!project || project.currentVersion === 0) return null;
     const version = await tx.externalProjectVersion.findFirst({
