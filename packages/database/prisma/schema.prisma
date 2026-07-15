@@ -474,7 +474,8 @@ model Portal {
   organizationId       String   @map("organization_id") @db.Uuid
   clientOrganizationId String   @map("client_organization_id") @db.Uuid
   name                 String
-  slug                 String
+  // Globally unique: /portal/[slug] is the client-facing route identity.
+  slug                 String   @unique
   // Optional per-portal override of the default internal->client status map.
   statusMapping        Json?    @map("status_mapping")
   createdAt            DateTime @default(now()) @map("created_at")
@@ -485,6 +486,8 @@ model Portal {
   memberships        PortalMembership[]
 
   @@unique([organizationId, slug])
+  // Target for the composite tenant-alignment FK from portal_memberships.
+  @@unique([organizationId, id])
   @@map("portals")
 }
 
@@ -501,7 +504,9 @@ model PortalMembership {
   createdAt      DateTime         @default(now()) @map("created_at")
   updatedAt      DateTime         @updatedAt @map("updated_at")
 
-  portal Portal @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  // Composite FK: a membership's organization must be the portal's
+  // organization — cross-tenant pairs are unrepresentable at the DB level.
+  portal Portal @relation(fields: [organizationId, portalId], references: [organizationId, id], onDelete: Cascade)
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([portalId, userId])

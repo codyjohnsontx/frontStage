@@ -2,15 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/server/session";
 import { getClientPublishedProject } from "@/server/client-portal";
-
-const HEALTH_LABELS: Record<string, string> = {
-  NOT_SET: "Not set",
-  ON_TRACK: "On track",
-  AT_RISK: "At risk",
-  OFF_TRACK: "Off track",
-  PAUSED: "Paused",
-  COMPLETE: "Complete",
-};
+import { HEALTH_LABELS } from "@/lib/health-labels";
 
 export default async function ClientProjectPage({
   params,
@@ -84,6 +76,7 @@ export default async function ClientProjectPage({
                 Version {h.version} — published {h.publishedAt.toLocaleString()}
               </li>
             ))}
+            {project.historyTruncated && <li>Older versions not shown.</li>}
           </ul>
         </div>
       )}

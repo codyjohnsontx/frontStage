@@ -3,15 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/server/session";
 import { getMyOrganizationBySlug } from "@/server/organizations";
 import { getPublishedSnapshot, previewClientView } from "@/server/projections";
-
-const HEALTH_LABELS: Record<string, string> = {
-  NOT_SET: "Not set",
-  ON_TRACK: "On track",
-  AT_RISK: "At risk",
-  OFF_TRACK: "Off track",
-  PAUSED: "Paused",
-  COMPLETE: "Complete",
-};
+import { HEALTH_LABELS } from "@/lib/health-labels";
 
 /**
  * Client-role preview: renders ONLY the client-safe projection (the same

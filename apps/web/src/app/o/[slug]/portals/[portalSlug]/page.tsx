@@ -5,6 +5,7 @@ import { getMyOrganizationBySlug } from "@/server/organizations";
 import { getPortalBySlug } from "@/server/clients";
 import { listAvailableProjectSources } from "@/server/projections";
 import { listPortalClientAccess } from "@/server/portal-members";
+import { PermissionDeniedError } from "@/server/authz";
 import {
   createDraftAction,
   inviteClientAction,
@@ -28,7 +29,13 @@ export default async function PortalPage({
   if (!portal) notFound();
 
   const availableSources = await listAvailableProjectSources(user, org.id, portal.id);
-  const clientAccess = await listPortalClientAccess(user, org.id, portal.id);
+  // The client-access card is only shown to members who may manage it.
+  let clientAccess: Awaited<ReturnType<typeof listPortalClientAccess>> | null = null;
+  try {
+    clientAccess = await listPortalClientAccess(user, org.id, portal.id);
+  } catch (err) {
+    if (!(err instanceof PermissionDeniedError)) throw err;
+  }
 
   return (
     <>
@@ -83,6 +90,7 @@ export default async function PortalPage({
         )}
       </div>
 
+      {clientAccess && (
       <div className="card">
         <h2>Client access</h2>
         <p className="muted">
@@ -170,6 +178,7 @@ export default async function PortalPage({
           <button type="submit">Invite client</button>
         </form>
       </div>
+      )}
 
       <div className="card">
         <h2>New projection from Linear</h2>

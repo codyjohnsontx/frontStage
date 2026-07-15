@@ -1,3 +1,4 @@
+import { cache } from "react";
 import {
   getPrisma,
   setRlsContext,
@@ -48,13 +49,13 @@ interface PortalAccess {
 }
 
 /** Resolve the user's active membership for a portal slug, or null. */
-async function resolveAccess(
+async function resolveAccessByUserId(
   tx: TransactionClient,
-  user: SessionUser,
+  userId: string,
   portalSlug: string,
 ): Promise<PortalAccess | null> {
   const membership = await tx.portalMembership.findFirst({
-    where: { userId: user.id, status: "ACTIVE", portal: { slug: portalSlug } },
+    where: { userId, status: "ACTIVE", portal: { slug: portalSlug } },
     include: { portal: true },
   });
   if (!membership) return null;
@@ -84,22 +85,30 @@ export interface ClientPortalOverview {
   }[];
 }
 
-export async function getClientPortalOverview(
-  user: SessionUser,
-  portalSlug: string,
-): Promise<ClientPortalOverview | null> {
-  return withRlsContext(getPrisma(), { userId: user.id }, async (tx) => {
-    const access = await resolveAccess(tx, user, portalSlug);
-    if (!access) return null;
+/**
+ * Request-scoped cache keyed by primitives (user id + slug) so the layout
+ * and page share one lookup per request — SessionUser objects are rebuilt
+ * per call and would defeat React's cache identity check.
+ */
+const getOverviewCached = cache(
+  async (userId: string, portalSlug: string): Promise<ClientPortalOverview | null> => {
+    return withRlsContext(getPrisma(), { userId }, async (tx) => {
+      const access = await resolveAccessByUserId(tx, userId, portalSlug);
+      if (!access) return null;
 
-    // Membership proven — enter the host org context for published reads.
-    await setRlsContext(tx, { organizationId: access.organizationId });
+      // Membership proven — enter the host org context for published reads.
+      await setRlsContext(tx, { organizationId: access.organizationId });
 
-    const [clientOrg, hostOrg, projects] = [
-      await tx.clientOrganization.findUnique({ where: { id: access.clientOrganizationId } }),
-      await tx.organization.findUnique({ where: { id: access.organizationId } }),
-      await tx.externalProject.findMany({
+      // Sequential on purpose: these run on one transaction connection.
+      const clientOrg = await tx.clientOrganization.findUnique({
+        where: { id: access.clientOrganizationId },
+      });
+      const hostOrg = await tx.organization.findUnique({
+        where: { id: access.organizationId },
+      });
+      const projects = await tx.externalProject.findMany({
         where: {
+          organizationId: access.organizationId,
           portalId: access.portalId,
           status: "PUBLISHED",
           currentVersion: { gt: 0 },
@@ -107,32 +116,39 @@ export async function getClientPortalOverview(
         },
         include: { versions: { orderBy: { version: "desc" }, take: 1 } },
         orderBy: { createdAt: "asc" },
-      }),
-    ];
+      });
 
-    return {
-      portalName: access.portalName,
-      portalSlug,
-      clientOrganizationName: clientOrg?.name ?? "",
-      hostOrganizationName: hostOrg?.name ?? "",
-      roleKey: access.roleKey,
-      projects: projects
-        .filter((p) => p.versions.length > 0)
-        .map((p) => {
-          const latest = p.versions[0]!;
-          const snapshot = latest.snapshot as unknown as ClientProjectView;
-          return {
-            identifier: snapshot.identifier,
-            name: snapshot.name,
-            summary: snapshot.summary,
-            health: snapshot.health,
-            version: latest.version,
-            publishedAt: latest.publishedAt,
-            workItemCount: snapshot.workItems.length,
-          };
-        }),
-    };
-  });
+      return {
+        portalName: access.portalName,
+        portalSlug,
+        clientOrganizationName: clientOrg?.name ?? "",
+        hostOrganizationName: hostOrg?.name ?? "",
+        roleKey: access.roleKey,
+        projects: projects
+          .filter((p) => p.versions.length > 0)
+          .map((p) => {
+            const latest = p.versions[0]!;
+            const snapshot = latest.snapshot as unknown as ClientProjectView;
+            return {
+              identifier: snapshot.identifier,
+              name: snapshot.name,
+              summary: snapshot.summary,
+              health: snapshot.health,
+              version: latest.version,
+              publishedAt: latest.publishedAt,
+              workItemCount: snapshot.workItems.length,
+            };
+          }),
+      };
+    });
+  },
+);
+
+export async function getClientPortalOverview(
+  user: SessionUser,
+  portalSlug: string,
+): Promise<ClientPortalOverview | null> {
+  return getOverviewCached(user.id, portalSlug);
 }
 
 export interface ClientPublishedProject {
@@ -142,7 +158,11 @@ export interface ClientPublishedProject {
   publishedAt: Date;
   snapshot: ClientProjectView;
   history: { version: number; publishedAt: Date }[];
+  historyTruncated: boolean;
 }
+
+/** Recent publications shown on the client project page. */
+const HISTORY_LIMIT = 20;
 
 export async function getClientPublishedProject(
   user: SessionUser,
@@ -150,7 +170,7 @@ export async function getClientPublishedProject(
   identifier: string,
 ): Promise<ClientPublishedProject | null> {
   return withRlsContext(getPrisma(), { userId: user.id }, async (tx) => {
-    const access = await resolveAccess(tx, user, portalSlug);
+    const access = await resolveAccessByUserId(tx, user.id, portalSlug);
     if (!access) return null;
 
     await setRlsContext(tx, { organizationId: access.organizationId });
@@ -163,18 +183,22 @@ export async function getClientPublishedProject(
         status: "PUBLISHED",
         currentVersion: { gt: 0 },
       },
-      include: { versions: { orderBy: { version: "desc" } } },
+      // Fetch one extra row to detect truncation without a count query.
+      include: { versions: { orderBy: { version: "desc" }, take: HISTORY_LIMIT + 1 } },
     });
     if (!project || project.versions.length === 0) return null;
 
-    const latest = project.versions[0]!;
+    const historyTruncated = project.versions.length > HISTORY_LIMIT;
+    const versions = project.versions.slice(0, HISTORY_LIMIT);
+    const latest = versions[0]!;
     return {
       portalName: access.portalName,
       roleKey: access.roleKey,
       version: latest.version,
       publishedAt: latest.publishedAt,
       snapshot: latest.snapshot as unknown as ClientProjectView,
-      history: project.versions.map((v) => ({ version: v.version, publishedAt: v.publishedAt })),
+      history: versions.map((v) => ({ version: v.version, publishedAt: v.publishedAt })),
+      historyTruncated,
     };
   });
 }

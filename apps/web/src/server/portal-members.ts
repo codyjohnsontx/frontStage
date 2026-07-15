@@ -32,6 +32,9 @@ export async function listPortalClientAccess(
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
     if (!context) throw new ValidationError("Not a member of this organization.");
+    // Client identities (names/emails) are sensitive: only members who can
+    // manage this portal's membership may list them.
+    assertPermission(context, "portal.members.manage", { organizationId, portalId });
 
     const members = await tx.portalMembership.findMany({
       where: { organizationId, portalId, status: "ACTIVE" },

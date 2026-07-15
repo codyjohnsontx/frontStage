@@ -273,6 +273,23 @@ describe("cross-client isolation (portal memberships)", () => {
     ).rejects.toThrow();
   });
 
+  it("cannot pair own organization with another org's portal (composite FK)", async () => {
+    // RLS WITH CHECK passes here (organizationId matches the context), so
+    // this is caught by the (organization_id, portal_id) -> portals FK.
+    await expect(
+      withRlsContext(app, { organizationId: ORG_A }, (tx) =>
+        tx.portalMembership.create({
+          data: {
+            organizationId: ORG_A,
+            portalId: PORTAL_B,
+            userId: USER_CAROL,
+            roleKey: "CLIENT_VIEWER",
+          },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
   it("a client user cannot read internal org data under identity context", async () => {
     await withRlsContext(app, { userId: USER_CAROL }, async (tx) => {
       expect(await tx.organizationMembership.count()).toBe(0);

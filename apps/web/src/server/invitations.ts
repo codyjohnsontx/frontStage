@@ -267,6 +267,17 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
       return { ok: false, reason: "This invitation has expired. Ask for a new one." };
     }
 
+    // Atomically claim the invitation before any membership writes: exactly
+    // one concurrent accept can flip PENDING -> ACCEPTED; every other racer
+    // gets the already-processed message and performs no side effects.
+    const claimed = await tx.invitation.updateMany({
+      where: { id: invitation.id, status: "PENDING" },
+      data: { status: "ACCEPTED", acceptedById: user.id, acceptedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      return { ok: false, reason: "This invitation was already accepted." };
+    }
+
     // Enter the invitation's organization context for the membership writes.
     await setRlsContext(tx, { organizationId: invitation.organizationId });
 
@@ -297,10 +308,6 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
           },
         });
       }
-      await tx.invitation.update({
-        where: { id: invitation.id },
-        data: { status: "ACCEPTED", acceptedById: user.id, acceptedAt: new Date() },
-      });
       const correlationId = newCorrelationId();
       await recordAuditEvent(tx, {
         organizationId: invitation.organizationId,
@@ -355,10 +362,6 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
         },
       });
     }
-    await tx.invitation.update({
-      where: { id: invitation.id },
-      data: { status: "ACCEPTED", acceptedById: user.id, acceptedAt: new Date() },
-    });
     const correlationId = newCorrelationId();
     await recordAuditEvent(tx, {
       organizationId: invitation.organizationId,

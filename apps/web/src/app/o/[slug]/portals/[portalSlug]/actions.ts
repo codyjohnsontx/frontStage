@@ -54,9 +54,11 @@ export async function inviteClientAction(formData: FormData): Promise<void> {
   if (!isClientInvitableRole(roleKey)) {
     redirect(`${path}?error=${encodeURIComponent("Unknown client role.")}`);
   }
+  // Resolve the portal outside the try so redirect() control flow is never
+  // intercepted by the error handling below.
+  const portal = await getPortalBySlug(user, org.id, portalSlug);
+  if (!portal) redirect("/orgs");
   try {
-    const portal = await getPortalBySlug(user, org.id, portalSlug);
-    if (!portal) redirect("/orgs");
     await invitePortalMember(
       user,
       org.id,

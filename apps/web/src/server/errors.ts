@@ -11,6 +11,12 @@ export class ValidationError extends Error {
   }
 }
 
+/** Next.js control-flow "errors" (redirect/notFound) must never be handled. */
+function isNextControlFlow(err: unknown): boolean {
+  const digest = (err as { digest?: unknown } | null)?.digest;
+  return typeof digest === "string" && (digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND");
+}
+
 /**
  * Map a caught exception to a message safe to show in a redirect. Only
  * intentional error types pass through; anything unexpected is logged
@@ -18,6 +24,7 @@ export class ValidationError extends Error {
  * (Prisma errors, stack fragments) never reach the URL bar.
  */
 export function actionErrorMessage(err: unknown, fallback: string, permissionMessage: string): string {
+  if (isNextControlFlow(err)) throw err;
   if (err instanceof PermissionDeniedError) return permissionMessage;
   if (err instanceof ValidationError) return err.message;
   log.error("unexpected_action_error", {

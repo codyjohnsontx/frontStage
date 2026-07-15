@@ -88,9 +88,18 @@ export async function createPortal(
     if (!client) throw new ValidationError("Client organization not found.");
 
     const slug = `${client.slug}-${portalSlugPart}`;
-    const portal = await tx.portal.create({
-      data: { organizationId, clientOrganizationId, name: trimmed, slug },
-    });
+    let portal;
+    try {
+      portal = await tx.portal.create({
+        data: { organizationId, clientOrganizationId, name: trimmed, slug },
+      });
+    } catch (err) {
+      // Portal slugs are globally unique (client-facing route identity).
+      if ((err as { code?: string }).code === "P2002") {
+        throw new ValidationError("That portal name is already in use. Choose a different name.");
+      }
+      throw err;
+    }
     await recordAuditEvent(tx, {
       organizationId,
       actorUserId: user.id,
