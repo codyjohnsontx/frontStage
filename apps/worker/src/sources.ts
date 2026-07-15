@@ -76,8 +76,11 @@ export async function upsertIssueSource(
     // One transaction: the source update + snapshot and the projection
     // flagging must commit together or not at all.
     const flaggedCount = await prisma.$transaction(async (tx) => {
-      await tx.sourceObject.update({
-        where: { id: existing.id },
+      // Compare-and-swap on the hash we read: if a concurrent sync/webhook
+      // already advanced this row, skip instead of duplicating the snapshot
+      // or overwriting the newer state.
+      const claimed = await tx.sourceObject.updateMany({
+        where: { id: existing.id, contentHash: existing.contentHash },
         data: {
           title: item.title,
           stateType: item.stateType,
@@ -87,12 +90,21 @@ export async function upsertIssueSource(
           contentHash: hash,
           archivedAt: item.archived ? (existing.archivedAt ?? seenAt) : null,
           lastSeenAt: seenAt,
-          snapshots: { create: { data: item as unknown as object, contentHash: hash } },
         },
       });
+      if (claimed.count === 0) return null;
+      await tx.sourceObjectSnapshot.create({
+        data: { sourceObjectId: existing.id, data: item as unknown as object, contentHash: hash },
+      });
+      // Divergence tracks the comparison in BOTH directions: flag items whose
+      // curation is now stale, clear items the source reverted back to.
       const flagged = await tx.externalWorkItem.updateMany({
         where: { sourceObjectId: existing.id, curatedHash: { not: hash } },
         data: { sourceChanged: true },
+      });
+      await tx.externalWorkItem.updateMany({
+        where: { sourceObjectId: existing.id, curatedHash: hash },
+        data: { sourceChanged: false },
       });
       // Archive state always tracks the source, both directions — a
       // reactivated item must not stay marked as archived.
@@ -102,6 +114,7 @@ export async function upsertIssueSource(
       });
       return flagged.count;
     });
+    if (flaggedCount === null) return; // concurrent update won; nothing to count
     counts.updated += 1;
     counts.flagged += flaggedCount;
     return;
@@ -158,18 +171,25 @@ export async function upsertProjectSource(
     });
     counts.created += 1;
   } else if (existing.contentHash !== hash) {
-    await prisma.sourceObject.update({
-      where: { id: existing.id },
-      data: {
-        title: project.name,
-        stateName: project.state ?? null,
-        data: project as unknown as object,
-        contentHash: hash,
-        lastSeenAt: seenAt,
-        snapshots: { create: { data: project as unknown as object, contentHash: hash } },
-      },
+    // Same compare-and-swap guard as issues: a concurrent update wins, we skip.
+    const updated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.sourceObject.updateMany({
+        where: { id: existing.id, contentHash: existing.contentHash },
+        data: {
+          title: project.name,
+          stateName: project.state ?? null,
+          data: project as unknown as object,
+          contentHash: hash,
+          lastSeenAt: seenAt,
+        },
+      });
+      if (claimed.count === 0) return false;
+      await tx.sourceObjectSnapshot.create({
+        data: { sourceObjectId: existing.id, data: project as unknown as object, contentHash: hash },
+      });
+      return true;
     });
-    counts.updated += 1;
+    if (updated) counts.updated += 1;
   } else {
     await prisma.sourceObject.update({ where: { id: existing.id }, data: { lastSeenAt: seenAt } });
   }

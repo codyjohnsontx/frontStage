@@ -135,6 +135,14 @@ export async function fetchAllProjects(accessToken: string): Promise<CanonicalPr
   return projects;
 }
 
+const ISSUE_FIELDS = `
+  id identifier title description priority estimate url updatedAt archivedAt
+  project { id }
+  assignee { name }
+  state { name type }
+  labels { nodes { name } }
+`;
+
 export async function fetchAllIssues(
   accessToken: string,
   projectId?: string,
@@ -146,13 +154,7 @@ export async function fetchAllIssues(
       accessToken,
       `query Issues($after: String, $filter: IssueFilter) {
         issues(first: 50, after: $after, filter: $filter, includeArchived: true) {
-          nodes {
-            id identifier title description priority estimate url updatedAt archivedAt
-            project { id }
-            assignee { name }
-            state { name type }
-            labels { nodes { name } }
-          }
+          nodes { ${ISSUE_FIELDS} }
           pageInfo { hasNextPage endCursor }
         }
       }`,
@@ -167,14 +169,6 @@ export async function fetchAllIssues(
   } while (cursor);
   return issues;
 }
-
-const ISSUE_FIELDS = `
-  id identifier title description priority estimate url updatedAt archivedAt
-  project { id }
-  assignee { name }
-  state { name type }
-  labels { nodes { name } }
-`;
 
 /** Single-entity fetches for webhook processing — no full-collection scans. */
 export async function fetchProjectById(
