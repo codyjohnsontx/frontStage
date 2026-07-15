@@ -17,12 +17,17 @@ package (tested). Next: web app scaffold with Auth.js (Google/Microsoft),
 org creation/switcher, invitation flow end-to-end, worker skeleton draining
 outbox/jobs.
 
-## Phase 1 — Linear projection
+## Phase 1 — Linear projection (complete in fixture mode)
 
 Linear OAuth (app actor), connection management, discovery, webhooks,
 snapshots, reconciliation, client orgs, portals, draft external projections,
 visibility controls, status mapping, source comparisons, preview, first
 publication, publication snapshots.
+
+Exit criteria met (see docs/progress.md): draft → curate → preview →
+publish → divergence flow verified end-to-end with the fixture workspace;
+leak boundary unit-tested. Live-workspace validation pends OAuth app
+registration.
 
 ## Phase 2 — Client collaboration
 

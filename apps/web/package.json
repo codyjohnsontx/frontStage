@@ -12,6 +12,8 @@
   "dependencies": {
     "@frontstage/authorization": "workspace:*",
     "@frontstage/database": "workspace:*",
+    "@frontstage/integration-core": "workspace:*",
+    "@frontstage/linear-adapter": "workspace:*",
     "@frontstage/observability": "workspace:*",
     "next": "^15.3.0",
     "next-auth": "5.0.0-beta.29",

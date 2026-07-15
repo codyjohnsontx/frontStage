@@ -2,6 +2,73 @@
 
 Honest record of what is actually built and verified. Newest first.
 
+## 2026-07-15 — Phase 1: Linear projection pipeline
+
+**Built:**
+
+- `@frontstage/integration-core`: canonical model (`CanonicalProject`,
+  `CanonicalWorkItem`, `WorkSystemAdapter`), simplified status mapping with
+  per-portal overrides, curation-relevant content hashing, AES-256-GCM token
+  crypto. The domain never sees provider types.
+- `@frontstage/linear-adapter`: real OAuth (app actor, token exchange),
+  GraphQL discovery with pagination + 429 guard, HMAC webhook verification
+  (constant-time, 60s replay bound), and a fixture mode serving an
+  official-shaped demo workspace (2 projects, 10 messy engineering issues)
+  gated to dev.
+- Schema + forced RLS for: integration_connections, source_objects (+
+  append-only-ish snapshots), webhook_events (infrastructure, cross-tenant),
+  client_organizations, portals, external_projects, source_links,
+  external_work_items, external_project_versions (append-only via trigger,
+  like audit_events).
+- Worker: `integration.sync` (discovery + upsert + snapshot + archive
+  detection), `webhook.process` (re-fetches real sources; trusts payloads
+  only for dev simulations), scheduled reconciliation every 5 minutes.
+- Web: Integrations page (fixture connect / OAuth start + callback / sync
+  now / dev change simulation), Clients page (client orgs with identifier
+  prefixes + portals), portal page (draft generation from Linear sources),
+  projection editor (client name/summary/health, per-item visibility +
+  client titles, divergence comparison with apply/keep decisions,
+  publish), client preview (draft and published-snapshot views).
+- `projectClientView()` pure leak boundary + 6 adversarial unit tests
+  (internal titles, labels, estimates, assignees, state names, source ids
+  cannot survive into client output). 51 tests passing workspace-wide.
+
+**Verified live (fixture mode, browser + worker + Postgres):**
+
+1. Connected the demo workspace → sync discovered 2 projects / 10 issues
+   (12 source objects + snapshots).
+2. Created client "Apex Health" (APEX) and portal "Credentialing
+   Modernization".
+3. Generated draft APEX-PRJ-001 → all 8 work items INTERNAL; client preview
+   showed "Nothing is shared with the client yet" and zero leaked strings
+   (psync/pwned/SPIKE/estimates/assignees all absent).
+4. Curated: client-safe name/summary, health On Track, 4 items made visible,
+   2 titles rewritten (e.g. ENG-42 → "Improve credential-verification
+   reliability").
+5. Preview showed exactly the 4 curated items with mapped statuses
+   (In Progress / Planned), no internal identifiers.
+6. Published v1 → immutable snapshot recorded.
+7. Simulated a Linear-side change to ENG-42 through the real webhook path →
+   worker processed it → work item flagged `sourceChanged`, curated title
+   untouched, published v1 snapshot byte-identical. Nothing silently
+   overwritten.
+
+**Phase 1 exit criteria:** a (fixture) Linear project became a curated
+client-facing project — verified; internal-only content does not leak —
+verified in preview, snapshot, and unit tests; source changes never silently
+overwrite client content — verified through the webhook + divergence flow.
+
+**Known limitations (tracked in docs/publication-engine.md):**
+
+- Real-workspace OAuth flow is implemented but unexercised until a Linear
+  OAuth app is registered.
+- Publish-confirm is the approval step; the publication policy engine is
+  future work.
+- Stateless-fixture quirk: the 5-minute reconciliation "reverts" simulated
+  changes to fixture canon (creating an extra snapshot) since the fixture
+  provider always reports original content. The human-review flag correctly
+  persists until resolved. Real providers do not have this behavior.
+
 ## 2026-07-15 — Phase 0 slice 3: Phase 0 exit criteria closed
 
 **Built:**
