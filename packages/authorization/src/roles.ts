@@ -1,5 +1,5 @@
-import type { Permission } from "./permissions.js";
-import { ALL_PERMISSIONS } from "./permissions.js";
+import type { Permission } from "./permissions";
+import { ALL_PERMISSIONS } from "./permissions";
 
 /** Mirrors the RoleKey enum in @frontstage/database. */
 export type RoleKey =

@@ -1,6 +1,6 @@
-import type { Permission } from "./permissions.js";
-import type { RoleKey } from "./roles.js";
-import { ROLE_PERMISSIONS } from "./roles.js";
+import type { Permission } from "./permissions";
+import type { RoleKey } from "./roles";
+import { ROLE_PERMISSIONS } from "./roles";
 
 export type ScopeType = "ORGANIZATION" | "CLIENT_ORGANIZATION" | "PORTAL" | "PROJECT";
 
