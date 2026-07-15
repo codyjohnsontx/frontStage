@@ -4,17 +4,23 @@ import { requireUser } from "@/server/session";
 import { getMyOrganizationBySlug } from "@/server/organizations";
 import { getPortalBySlug } from "@/server/clients";
 import { listAvailableProjectSources } from "@/server/projections";
-import { createDraftAction } from "./actions";
+import { listPortalClientAccess } from "@/server/portal-members";
+import {
+  createDraftAction,
+  inviteClientAction,
+  removeClientMemberAction,
+  revokeClientInvitationAction,
+} from "./actions";
 
 export default async function PortalPage({
   params,
   searchParams,
 }: {
   params: Promise<{ slug: string; portalSlug: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; invited?: string }>;
 }) {
   const { slug, portalSlug } = await params;
-  const { error } = await searchParams;
+  const { error, invited } = await searchParams;
   const user = await requireUser();
   const org = await getMyOrganizationBySlug(user, slug);
   if (!org) notFound();
@@ -22,6 +28,7 @@ export default async function PortalPage({
   if (!portal) notFound();
 
   const availableSources = await listAvailableProjectSources(user, org.id, portal.id);
+  const clientAccess = await listPortalClientAccess(user, org.id, portal.id);
 
   return (
     <>
@@ -30,6 +37,12 @@ export default async function PortalPage({
       </p>
       <h1 style={{ marginTop: "0.25rem" }}>{portal.name}</h1>
       {error && <div className="error-banner">{error}</div>}
+      {invited && (
+        <div className="success-banner">
+          Invitation sent to {invited}. It is bound to that email, single-use, and expires in 7
+          days. They will only ever see published content for this portal.
+        </div>
+      )}
 
       <div className="card">
         <h2>Client-facing projects</h2>
@@ -68,6 +81,94 @@ export default async function PortalPage({
             </tbody>
           </table>
         )}
+      </div>
+
+      <div className="card">
+        <h2>Client access</h2>
+        <p className="muted">
+          Client users sign in with their own identity and see only what this portal has
+          published. They never join your organization.
+        </p>
+        {clientAccess.members.length > 0 && (
+          <table style={{ marginBottom: "0.75rem" }}>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {clientAccess.members.map((m) => (
+                <tr key={m.membershipId}>
+                  <td>{m.name ?? "—"}</td>
+                  <td>{m.email}</td>
+                  <td>
+                    <span className="role-tag">{m.roleKey.toLowerCase().replace(/_/g, " ")}</span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <form action={removeClientMemberAction} style={{ display: "inline" }}>
+                      <input type="hidden" name="slug" value={org.slug} />
+                      <input type="hidden" name="portalSlug" value={portal.slug} />
+                      <input type="hidden" name="membershipId" value={m.membershipId} />
+                      <button type="submit" className="danger">Remove</button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {clientAccess.invitations.length > 0 && (
+          <table style={{ marginBottom: "0.75rem" }}>
+            <thead>
+              <tr>
+                <th>Pending invitation</th>
+                <th>Role</th>
+                <th>Expires</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {clientAccess.invitations.map((i) => (
+                <tr key={i.id}>
+                  <td>{i.email}</td>
+                  <td>
+                    <span className="role-tag">{i.roleKey.toLowerCase().replace(/_/g, " ")}</span>
+                  </td>
+                  <td className="muted">{i.expiresAt.toLocaleDateString()}</td>
+                  <td style={{ textAlign: "right" }}>
+                    <form action={revokeClientInvitationAction} style={{ display: "inline" }}>
+                      <input type="hidden" name="slug" value={org.slug} />
+                      <input type="hidden" name="portalSlug" value={portal.slug} />
+                      <input type="hidden" name="invitationId" value={i.id} />
+                      <button type="submit" className="danger">Revoke</button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <form action={inviteClientAction} className="form-row">
+          <input type="hidden" name="slug" value={org.slug} />
+          <input type="hidden" name="portalSlug" value={portal.slug} />
+          <input
+            name="email"
+            type="email"
+            placeholder="client@company.com"
+            required
+            style={{ flex: 1, minWidth: 220 }}
+          />
+          <select name="roleKey" defaultValue="CLIENT_CONTRIBUTOR" aria-label="Client role">
+            <option value="CLIENT_ADMIN">Client Admin</option>
+            <option value="CLIENT_APPROVER">Client Approver</option>
+            <option value="CLIENT_CONTRIBUTOR">Client Contributor</option>
+            <option value="CLIENT_VIEWER">Client Viewer</option>
+          </select>
+          <button type="submit">Invite client</button>
+        </form>
       </div>
 
       <div className="card">

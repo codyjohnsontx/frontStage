@@ -54,13 +54,13 @@ parking lot).
 Exit: a client submits a request → it creates a real Linear Triage issue →
 internal and public communication remain correctly separated.
 
-- 🔜 **2.1 Clients get in the door** — portal memberships + client-role
+- ✅ **2.1 Clients get in the door** — portal memberships + client-role
   invitations (CLIENT_ADMIN/APPROVER/CONTRIBUTOR/VIEWER, reusing Phase 0
   invitation machinery scoped to portals), client-facing portal shell
   (`/portal/…`, simpler nav than the internal console), client overview
   rendering **published snapshots only**, org/portal context always
   visible, cross-client isolation probes added to the RLS suite.
-- ⬜ **2.2 Requests** — request forms per portal, client submission with
+- 🔜 **2.2 Requests** — request forms per portal, client submission with
   idempotency key, initial state "Received — Not Yet Committed" with the
   no-commitment explainer, Linear Triage issue creation through the outbox
   (adapter gains `createWorkItem`; fixture mode simulates), client priority

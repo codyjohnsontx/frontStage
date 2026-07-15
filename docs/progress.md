@@ -2,6 +2,49 @@
 
 Honest record of what is actually built and verified. Newest first.
 
+## 2026-07-15 — Slice 2.1: clients get in the door
+
+**Built:**
+
+- `portal_memberships` table + forced RLS: tenant isolation, user-reads-own
+  policy, and a `client_member_reads_portal` policy so a client can resolve
+  their portal before any org context exists. Client users NEVER become
+  members of the host organization — separate membership model.
+- Client-role invitations: portal-scoped (CLIENT_ADMIN/APPROVER/
+  CONTRIBUTOR/VIEWER only), reusing the email-bound single-use machinery;
+  acceptance branches to create a PortalMembership and redirects to the
+  client portal. Portal-scoped invitations are revocable with
+  `portal.members.manage` (org-manage no longer required).
+- Internal portal page: "Client access" card — invite client, list/remove
+  members, revoke pending invitations.
+- Client portal shell (`/portal/[slug]`): simpler nav, always-visible
+  context (portal, client org, host org), overview listing PUBLISHED
+  projects only (rendered purely from immutable snapshots), project detail
+  with publication history. `/orgs` lists client portals and redirects pure
+  client users straight to their portal.
+- `loadAuthorizationContext` deliberately stays internal-only (a client
+  membership must not pass the internal-console membership gate); client
+  flows prove access via PortalMembership in `client-portal.ts`.
+- 5 new cross-client isolation probes in the RLS suite (59 tests total):
+  client sees only their own memberships/portal, other portals invisible
+  even by direct slug, org-context scoping, cross-org write rejection,
+  and client identity context reads zero internal tables.
+
+**Verified live (scripted HTTP end-to-end, servers on :3100):**
+
+1. Portal-scoped CLIENT_VIEWER invitation for carol@apex-health.test →
+   preview correctly says "the Credentialing Modernization client portal".
+2. Carol signed in (dev login), accepted via the server action → 303 to
+   `/portal/apex-health-credentialing-modernization?joined=1`.
+3. Overview shows APEX-PRJ-001 (curated name, On track); project page
+   renders the published snapshot (curated titles, mapped statuses).
+4. Leak check across both client pages: zero internal strings (psync,
+   SPIKE, assignees, ENG ids, estimates all absent).
+5. Access control: internal org page → 404 for Carol; unknown portal →
+   404; `/orgs` → 307 straight to her portal.
+6. Internal Client access card lists Carol as client viewer; re-visiting
+   the invite link says "already accepted" (single-use).
+
 ## 2026-07-15 — Phase 1: Linear projection pipeline
 
 **Built:**

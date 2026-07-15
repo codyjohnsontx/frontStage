@@ -22,6 +22,11 @@ const ORG_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ORG_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const USER_ALICE = "11111111-1111-4111-8111-111111111111"; // member of A only
 const USER_BOB = "22222222-2222-4222-8222-222222222222"; // member of B only
+const USER_CAROL = "33333333-3333-4333-8333-333333333333"; // client of A's portal only
+const CLIENT_A = "44444444-4444-4444-8444-444444444444";
+const CLIENT_B = "55555555-5555-4555-8555-555555555555";
+const PORTAL_A = "66666666-6666-4666-8666-666666666666";
+const PORTAL_B = "77777777-7777-4777-8777-777777777777";
 
 let owner: PrismaClient;
 let app: PrismaClient;
@@ -95,6 +100,31 @@ beforeAll(async () => {
       { organizationId: ORG_A, actorType: "SYSTEM", action: "seed", resourceType: "test" },
       { organizationId: ORG_B, actorType: "SYSTEM", action: "seed", resourceType: "test" },
     ],
+  });
+
+  // Client-side fixtures: one portal per org, Carol is a client of A's only.
+  await owner.user.create({
+    data: { id: USER_CAROL, email: "carol@client-a.test", name: "Carol" },
+  });
+  await owner.clientOrganization.createMany({
+    data: [
+      { id: CLIENT_A, organizationId: ORG_A, name: "Client A", slug: "client-a", identifierPrefix: "CA" },
+      { id: CLIENT_B, organizationId: ORG_B, name: "Client B", slug: "client-b", identifierPrefix: "CB" },
+    ],
+  });
+  await owner.portal.createMany({
+    data: [
+      { id: PORTAL_A, organizationId: ORG_A, clientOrganizationId: CLIENT_A, name: "Portal A", slug: "portal-a" },
+      { id: PORTAL_B, organizationId: ORG_B, clientOrganizationId: CLIENT_B, name: "Portal B", slug: "portal-b" },
+    ],
+  });
+  await owner.portalMembership.create({
+    data: {
+      organizationId: ORG_A,
+      portalId: PORTAL_A,
+      userId: USER_CAROL,
+      roleKey: "CLIENT_VIEWER",
+    },
   });
 });
 
@@ -193,6 +223,63 @@ describe("identity context", () => {
       }),
     );
     expect(result.count).toBe(0);
+  });
+});
+
+describe("cross-client isolation (portal memberships)", () => {
+  it("a client user sees only their own portal memberships and portals", async () => {
+    await withRlsContext(app, { userId: USER_CAROL }, async (tx) => {
+      const memberships = await tx.portalMembership.findMany();
+      expect(memberships.map((m) => m.portalId)).toEqual([PORTAL_A]);
+      const portals = await tx.portal.findMany();
+      expect(portals.map((p) => p.id)).toEqual([PORTAL_A]);
+    });
+  });
+
+  it("another client's portal is completely invisible, even by direct slug", async () => {
+    await withRlsContext(app, { userId: USER_CAROL }, async (tx) => {
+      const portalB = await tx.portal.findFirst({ where: { slug: "portal-b" } });
+      expect(portalB).toBeNull();
+      // Internal users of org A cannot see org B's portal memberships either.
+    });
+    await withRlsContext(app, { userId: USER_ALICE }, async (tx) => {
+      expect(await tx.portalMembership.count()).toBe(0); // Alice has none of her own
+    });
+  });
+
+  it("org context exposes only that org's portal memberships", async () => {
+    await withRlsContext(app, { organizationId: ORG_A }, async (tx) => {
+      const memberships = await tx.portalMembership.findMany();
+      expect(memberships.every((m) => m.organizationId === ORG_A)).toBe(true);
+      expect(memberships.length).toBe(1);
+    });
+    await withRlsContext(app, { organizationId: ORG_B }, async (tx) => {
+      expect(await tx.portalMembership.count()).toBe(0);
+    });
+  });
+
+  it("cannot write a portal membership into another organization", async () => {
+    await expect(
+      withRlsContext(app, { organizationId: ORG_A }, (tx) =>
+        tx.portalMembership.create({
+          data: {
+            organizationId: ORG_B,
+            portalId: PORTAL_B,
+            userId: USER_CAROL,
+            roleKey: "CLIENT_VIEWER",
+          },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("a client user cannot read internal org data under identity context", async () => {
+    await withRlsContext(app, { userId: USER_CAROL }, async (tx) => {
+      expect(await tx.organizationMembership.count()).toBe(0);
+      expect(await tx.organization.count()).toBe(0);
+      expect(await tx.auditEvent.count()).toBe(0);
+      expect(await tx.sourceObject.count()).toBe(0);
+    });
   });
 });
 

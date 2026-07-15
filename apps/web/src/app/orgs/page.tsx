@@ -1,12 +1,20 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { requireUser } from "@/server/session";
 import { listMyOrganizations } from "@/server/organizations";
+import { listMyClientPortals } from "@/server/client-portal";
 import { signOut } from "@/auth";
 import { createOrganizationAction } from "./actions";
 
 export default async function OrgsPage() {
   const user = await requireUser();
   const orgs = await listMyOrganizations(user);
+  const clientPortals = await listMyClientPortals(user);
+
+  // Pure client users go straight to their portal.
+  if (orgs.length === 0 && clientPortals.length === 1) {
+    redirect(`/portal/${clientPortals[0]!.portalSlug}`);
+  }
 
   return (
     <>
@@ -28,6 +36,39 @@ export default async function OrgsPage() {
         </span>
       </header>
       <main className="container">
+        {clientPortals.length > 0 && (
+          <>
+            <h1>Your client portals</h1>
+            <div className="card">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Portal</th>
+                    <th>Your role</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientPortals.map((p) => (
+                    <tr key={p.portalId}>
+                      <td>{p.portalName}</td>
+                      <td>
+                        <span className="role-tag">
+                          {p.roleKey.toLowerCase().replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        <Link className="button" href={`/portal/${p.portalSlug}`}>
+                          Open
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
         <h1>Your organizations</h1>
         {orgs.length === 0 ? (
           <div className="empty-state">

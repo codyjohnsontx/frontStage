@@ -29,6 +29,7 @@ model User {
   authAccounts        AuthAccount[]
   sessions            Session[]
   memberships         OrganizationMembership[]
+  portalMemberships   PortalMembership[]
   invitationsSent     Invitation[]             @relation("InvitationInviter")
   invitationsAccepted Invitation[]             @relation("InvitationAcceptor")
 
@@ -481,9 +482,32 @@ model Portal {
 
   clientOrganization ClientOrganization @relation(fields: [clientOrganizationId], references: [id], onDelete: Cascade)
   externalProjects   ExternalProject[]
+  memberships        PortalMembership[]
 
   @@unique([organizationId, slug])
   @@map("portals")
+}
+
+// Client users belong to portals, never to the host organization. Their
+// role (CLIENT_ADMIN/APPROVER/CONTRIBUTOR/VIEWER) lives here — separate
+// from internal OrganizationMembership + ScopedRoleAssignment.
+model PortalMembership {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  portalId       String           @map("portal_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  roleKey        RoleKey          @map("role_key")
+  status         MembershipStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  portal Portal @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([portalId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("portal_memberships")
 }
 
 enum ProjectionStatus {
