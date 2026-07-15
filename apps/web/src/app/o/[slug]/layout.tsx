@@ -31,6 +31,8 @@ export default async function OrgLayout({
         </span>
         <nav style={{ display: "flex", gap: "1rem" }}>
           <Link href={`/o/${org.slug}`}>Home</Link>
+          <Link href={`/o/${org.slug}/clients`}>Clients</Link>
+          <Link href={`/o/${org.slug}/integrations`}>Integrations</Link>
           <Link href={`/o/${org.slug}/members`}>Members</Link>
         </nav>
       </header>

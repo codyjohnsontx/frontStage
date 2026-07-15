@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@frontstage/database": "workspace:*",
+    "@frontstage/integration-core": "workspace:*",
+    "@frontstage/linear-adapter": "workspace:*",
     "@frontstage/observability": "workspace:*",
     "dotenv": "^16.4.0",
     "nodemailer": "^6.9.0",

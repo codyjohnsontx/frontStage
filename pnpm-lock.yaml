@@ -16,6 +16,12 @@ importers:
       '@frontstage/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@frontstage/integration-core':
+        specifier: workspace:*
+        version: link:../../packages/integration-core
+      '@frontstage/linear-adapter':
+        specifier: workspace:*
+        version: link:../../packages/linear-adapter
       '@frontstage/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -56,6 +62,12 @@ importers:
       '@frontstage/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@frontstage/integration-core':
+        specifier: workspace:*
+        version: link:../../packages/integration-core
+      '@frontstage/linear-adapter':
+        specifier: workspace:*
+        version: link:../../packages/linear-adapter
       '@frontstage/observability':
         specifier: workspace:*
         version: link:../../packages/observability
@@ -103,6 +115,31 @@ importers:
       prisma:
         specifier: ^6.0.0
         version: 6.19.3(typescript@5.9.3)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)
+
+  packages/integration-core:
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)
+
+  packages/linear-adapter:
+    dependencies:
+      '@frontstage/integration-core':
+        specifier: workspace:*
+        version: link:../integration-core
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
       typescript:
         specifier: ^5.5.0
         version: 5.9.3

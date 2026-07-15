@@ -334,6 +334,254 @@ model FeatureFlagOverride {
   @@map("feature_flag_overrides")
 }
 
+// ---------------------------------------------------------------------------
+// Phase 1: integrations, source objects, clients, portals, projections.
+// ---------------------------------------------------------------------------
+
+enum IntegrationProvider {
+  LINEAR
+
+  @@map("integration_provider")
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  ERROR
+  DISCONNECTED
+
+  @@map("connection_status")
+}
+
+model IntegrationConnection {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organizationId        String              @map("organization_id") @db.Uuid
+  provider              IntegrationProvider
+  status                ConnectionStatus    @default(ACTIVE)
+  // "oauth" for real Linear; "fixture" for the dev/demo adapter.
+  mode                  String              @default("oauth")
+  workspaceId           String?             @map("workspace_id")
+  workspaceName         String?             @map("workspace_name")
+  encryptedAccessToken  String?             @map("encrypted_access_token")
+  encryptedRefreshToken String?             @map("encrypted_refresh_token")
+  tokenExpiresAt        DateTime?           @map("token_expires_at")
+  scopes                String[]            @default([])
+  lastSyncAt            DateTime?           @map("last_sync_at")
+  lastError             String?             @map("last_error")
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  sourceObjects SourceObject[]
+
+  @@unique([organizationId, provider])
+  // One provider workspace connects to at most one organization, so webhook
+  // workspace->connection resolution is deterministic. NULLs don't collide.
+  @@unique([provider, workspaceId])
+  @@map("integration_connections")
+}
+
+enum SourceObjectType {
+  PROJECT
+  ISSUE
+
+  @@map("source_object_type")
+}
+
+model SourceObject {
+  id               String              @id @default(uuid()) @db.Uuid
+  organizationId   String              @map("organization_id") @db.Uuid
+  connectionId     String              @map("connection_id") @db.Uuid
+  provider         IntegrationProvider
+  externalId       String              @map("external_id")
+  type             SourceObjectType
+  parentExternalId String?             @map("parent_external_id")
+  title            String
+  stateType        String?             @map("state_type")
+  stateName        String?             @map("state_name")
+  data             Json
+  contentHash      String              @map("content_hash")
+  archivedAt       DateTime?           @map("archived_at")
+  lastSeenAt       DateTime            @default(now()) @map("last_seen_at")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
+
+  connection IntegrationConnection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  snapshots  SourceObjectSnapshot[]
+  sourceLinks SourceLink[]
+  workItems  ExternalWorkItem[]
+
+  @@unique([connectionId, externalId])
+  @@index([organizationId, type])
+  @@map("source_objects")
+}
+
+model SourceObjectSnapshot {
+  id             String   @id @default(uuid()) @db.Uuid
+  sourceObjectId String   @map("source_object_id") @db.Uuid
+  data           Json
+  contentHash    String   @map("content_hash")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  sourceObject SourceObject @relation(fields: [sourceObjectId], references: [id], onDelete: Cascade)
+
+  @@index([sourceObjectId, createdAt])
+  @@map("source_object_snapshots")
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+
+  @@map("webhook_status")
+}
+
+// Infrastructure table (like jobs/outbox): processed by the worker across
+// organizations, so not org-RLS'd.
+model WebhookEvent {
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String?             @map("organization_id") @db.Uuid
+  provider       IntegrationProvider
+  dedupeKey      String              @unique @map("dedupe_key")
+  eventType      String              @map("event_type")
+  payload        Json
+  status         WebhookStatus       @default(RECEIVED)
+  receivedAt     DateTime            @default(now()) @map("received_at")
+  processedAt    DateTime?           @map("processed_at")
+  lastError      String?             @map("last_error")
+
+  @@map("webhook_events")
+}
+
+model ClientOrganization {
+  id                String   @id @default(uuid()) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  name              String
+  slug              String
+  identifierPrefix  String   @map("identifier_prefix")
+  nextProjectNumber Int      @default(1) @map("next_project_number")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  portals Portal[]
+
+  @@unique([organizationId, slug])
+  @@map("client_organizations")
+}
+
+model Portal {
+  id                   String   @id @default(uuid()) @db.Uuid
+  organizationId       String   @map("organization_id") @db.Uuid
+  clientOrganizationId String   @map("client_organization_id") @db.Uuid
+  name                 String
+  slug                 String
+  // Optional per-portal override of the default internal->client status map.
+  statusMapping        Json?    @map("status_mapping")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  clientOrganization ClientOrganization @relation(fields: [clientOrganizationId], references: [id], onDelete: Cascade)
+  externalProjects   ExternalProject[]
+
+  @@unique([organizationId, slug])
+  @@map("portals")
+}
+
+enum ProjectionStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("projection_status")
+}
+
+model ExternalProject {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  portalId       String           @map("portal_id") @db.Uuid
+  identifier     String
+  name           String
+  summary        String           @default("")
+  health         String           @default("NOT_SET")
+  status         ProjectionStatus @default(DRAFT)
+  currentVersion Int              @default(0) @map("current_version")
+  createdById    String           @map("created_by_id") @db.Uuid
+  archivedAt     DateTime?        @map("archived_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  portal      Portal                   @relation(fields: [portalId], references: [id], onDelete: Cascade)
+  sourceLinks SourceLink[]
+  workItems   ExternalWorkItem[]
+  versions    ExternalProjectVersion[]
+
+  @@unique([organizationId, identifier])
+  @@map("external_projects")
+}
+
+model SourceLink {
+  id                String  @id @default(uuid()) @db.Uuid
+  organizationId    String  @map("organization_id") @db.Uuid
+  externalProjectId String  @map("external_project_id") @db.Uuid
+  sourceObjectId    String  @map("source_object_id") @db.Uuid
+  relationship      String?
+  isPrimary         Boolean @default(false) @map("is_primary")
+
+  externalProject ExternalProject @relation(fields: [externalProjectId], references: [id], onDelete: Cascade)
+  sourceObject    SourceObject    @relation(fields: [sourceObjectId], references: [id], onDelete: Cascade)
+
+  @@unique([externalProjectId, sourceObjectId])
+  @@index([organizationId])
+  @@map("source_links")
+}
+
+enum WorkItemVisibility {
+  INTERNAL
+  CLIENT_VISIBLE
+
+  @@map("work_item_visibility")
+}
+
+model ExternalWorkItem {
+  id                 String             @id @default(uuid()) @db.Uuid
+  organizationId     String             @map("organization_id") @db.Uuid
+  externalProjectId  String             @map("external_project_id") @db.Uuid
+  sourceObjectId     String             @map("source_object_id") @db.Uuid
+  clientTitle        String             @map("client_title")
+  clientDescription  String?            @map("client_description")
+  visibility         WorkItemVisibility @default(INTERNAL)
+  curatedHash        String             @map("curated_hash")
+  sourceChanged      Boolean            @default(false) @map("source_changed")
+  archivedFromSource Boolean            @default(false) @map("archived_from_source")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  externalProject ExternalProject @relation(fields: [externalProjectId], references: [id], onDelete: Cascade)
+  sourceObject    SourceObject    @relation(fields: [sourceObjectId], references: [id], onDelete: Cascade)
+
+  @@unique([externalProjectId, sourceObjectId])
+  @@index([organizationId])
+  @@map("external_work_items")
+}
+
+// Immutable publication snapshots: exactly what the client saw at publish.
+model ExternalProjectVersion {
+  id                String   @id @default(uuid()) @db.Uuid
+  organizationId    String   @map("organization_id") @db.Uuid
+  externalProjectId String   @map("external_project_id") @db.Uuid
+  version           Int
+  snapshot          Json
+  publishedById     String   @map("published_by_id") @db.Uuid
+  publishedAt       DateTime @default(now()) @map("published_at")
+
+  // Restrict, not Cascade: published snapshots are immutable client history
+  // (§6.3). Removing a project means archiving it, never deleting snapshots.
+  externalProject ExternalProject @relation(fields: [externalProjectId], references: [id], onDelete: Restrict)
+
+  @@unique([externalProjectId, version])
+  @@index([organizationId])
+  @@map("external_project_versions")
+}
+
 model IdempotencyRecord {
   id             String   @id @default(uuid()) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
