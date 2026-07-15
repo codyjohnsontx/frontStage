@@ -33,6 +33,23 @@ interface UpsertResult {
   flagged: number;
 }
 
+const CAS_MAX_ATTEMPTS = 3;
+
+/**
+ * Conflict policy for lost compare-and-swap claims: keep our delivery only
+ * when its provider timestamp is strictly newer than what the concurrent
+ * winner wrote. Unparseable timestamps count as "not newer" — discarding is
+ * safe because scheduled reconciliation converges on provider truth.
+ */
+function isNewerThan(itemUpdatedAt: string, currentData: unknown): boolean {
+  const currentUpdatedAt = (currentData as { updatedAt?: string } | null)?.updatedAt ?? "";
+  const ours = Date.parse(itemUpdatedAt);
+  const theirs = Date.parse(currentUpdatedAt);
+  if (Number.isNaN(ours)) return false;
+  if (Number.isNaN(theirs)) return true;
+  return ours > theirs;
+}
+
 /**
  * Upsert one canonical work item into source_objects. On content change:
  * write a snapshot and flag linked external work items as diverged
@@ -73,51 +90,67 @@ export async function upsertIssueSource(
   }
 
   if (existing.contentHash !== hash) {
-    // One transaction: the source update + snapshot and the projection
-    // flagging must commit together or not at all.
-    const flaggedCount = await prisma.$transaction(async (tx) => {
-      // Compare-and-swap on the hash we read: if a concurrent sync/webhook
-      // already advanced this row, skip instead of duplicating the snapshot
-      // or overwriting the newer state.
-      const claimed = await tx.sourceObject.updateMany({
-        where: { id: existing.id, contentHash: existing.contentHash },
-        data: {
-          title: item.title,
-          stateType: item.stateType,
-          stateName: item.stateName,
-          parentExternalId: item.projectId ?? null,
-          data: item as unknown as object,
-          contentHash: hash,
-          archivedAt: item.archived ? (existing.archivedAt ?? seenAt) : null,
-          lastSeenAt: seenAt,
-        },
+    let expectedHash = existing.contentHash;
+    let expectedArchivedAt = existing.archivedAt;
+    for (let attempt = 0; attempt < CAS_MAX_ATTEMPTS; attempt++) {
+      // One transaction: the source update + snapshot and the projection
+      // flagging must commit together or not at all.
+      const flaggedCount = await prisma.$transaction(async (tx) => {
+        // Compare-and-swap on the hash we last read: if a concurrent
+        // sync/webhook advanced this row, we resolve the conflict below
+        // instead of duplicating the snapshot or overwriting blindly.
+        const claimed = await tx.sourceObject.updateMany({
+          where: { id: existing.id, contentHash: expectedHash },
+          data: {
+            title: item.title,
+            stateType: item.stateType,
+            stateName: item.stateName,
+            parentExternalId: item.projectId ?? null,
+            data: item as unknown as object,
+            contentHash: hash,
+            archivedAt: item.archived ? (expectedArchivedAt ?? seenAt) : null,
+            lastSeenAt: seenAt,
+          },
+        });
+        if (claimed.count === 0) return null;
+        await tx.sourceObjectSnapshot.create({
+          data: { sourceObjectId: existing.id, data: item as unknown as object, contentHash: hash },
+        });
+        // Divergence tracks the comparison in BOTH directions: flag items whose
+        // curation is now stale, clear items the source reverted back to.
+        const flagged = await tx.externalWorkItem.updateMany({
+          where: { sourceObjectId: existing.id, curatedHash: { not: hash } },
+          data: { sourceChanged: true },
+        });
+        await tx.externalWorkItem.updateMany({
+          where: { sourceObjectId: existing.id, curatedHash: hash },
+          data: { sourceChanged: false },
+        });
+        // Archive state always tracks the source, both directions — a
+        // reactivated item must not stay marked as archived.
+        await tx.externalWorkItem.updateMany({
+          where: { sourceObjectId: existing.id },
+          data: { archivedFromSource: item.archived ?? false },
+        });
+        return flagged.count;
       });
-      if (claimed.count === 0) return null;
-      await tx.sourceObjectSnapshot.create({
-        data: { sourceObjectId: existing.id, data: item as unknown as object, contentHash: hash },
-      });
-      // Divergence tracks the comparison in BOTH directions: flag items whose
-      // curation is now stale, clear items the source reverted back to.
-      const flagged = await tx.externalWorkItem.updateMany({
-        where: { sourceObjectId: existing.id, curatedHash: { not: hash } },
-        data: { sourceChanged: true },
-      });
-      await tx.externalWorkItem.updateMany({
-        where: { sourceObjectId: existing.id, curatedHash: hash },
-        data: { sourceChanged: false },
-      });
-      // Archive state always tracks the source, both directions — a
-      // reactivated item must not stay marked as archived.
-      await tx.externalWorkItem.updateMany({
-        where: { sourceObjectId: existing.id },
-        data: { archivedFromSource: item.archived ?? false },
-      });
-      return flagged.count;
-    });
-    if (flaggedCount === null) return; // concurrent update won; nothing to count
-    counts.updated += 1;
-    counts.flagged += flaggedCount;
-    return;
+      if (flaggedCount !== null) {
+        counts.updated += 1;
+        counts.flagged += flaggedCount;
+        return;
+      }
+
+      // CAS lost: re-read and decide whether our delivery is stale or newer.
+      const current = await prisma.sourceObject.findUnique({ where: { id: existing.id } });
+      if (!current || current.contentHash === hash) return; // winner wrote our content (or row gone)
+      if (!isNewerThan(item.updatedAt, current.data)) return; // demonstrably stale — discard
+      // Ours is newer than what the winner wrote: retry against the new hash.
+      expectedHash = current.contentHash;
+      expectedArchivedAt = current.archivedAt;
+    }
+    // Still losing after retries: fail the job so the delivery is requeued
+    // with backoff rather than silently marked processed with stale data.
+    throw new Error(`Concurrent updates to source ${item.id} exhausted CAS retries; requeueing`);
   }
 
   // Unchanged content — but clear archive state if the item reappeared.
@@ -171,25 +204,36 @@ export async function upsertProjectSource(
     });
     counts.created += 1;
   } else if (existing.contentHash !== hash) {
-    // Same compare-and-swap guard as issues: a concurrent update wins, we skip.
-    const updated = await prisma.$transaction(async (tx) => {
-      const claimed = await tx.sourceObject.updateMany({
-        where: { id: existing.id, contentHash: existing.contentHash },
-        data: {
-          title: project.name,
-          stateName: project.state ?? null,
-          data: project as unknown as object,
-          contentHash: hash,
-          lastSeenAt: seenAt,
-        },
+    // Same compare-and-swap + conflict policy as issues.
+    let expectedHash = existing.contentHash;
+    for (let attempt = 0; attempt < CAS_MAX_ATTEMPTS; attempt++) {
+      const updated = await prisma.$transaction(async (tx) => {
+        const claimed = await tx.sourceObject.updateMany({
+          where: { id: existing.id, contentHash: expectedHash },
+          data: {
+            title: project.name,
+            stateName: project.state ?? null,
+            data: project as unknown as object,
+            contentHash: hash,
+            lastSeenAt: seenAt,
+          },
+        });
+        if (claimed.count === 0) return false;
+        await tx.sourceObjectSnapshot.create({
+          data: { sourceObjectId: existing.id, data: project as unknown as object, contentHash: hash },
+        });
+        return true;
       });
-      if (claimed.count === 0) return false;
-      await tx.sourceObjectSnapshot.create({
-        data: { sourceObjectId: existing.id, data: project as unknown as object, contentHash: hash },
-      });
-      return true;
-    });
-    if (updated) counts.updated += 1;
+      if (updated) {
+        counts.updated += 1;
+        return;
+      }
+      const current = await prisma.sourceObject.findUnique({ where: { id: existing.id } });
+      if (!current || current.contentHash === hash) return;
+      if (!isNewerThan(project.updatedAt, current.data)) return;
+      expectedHash = current.contentHash;
+    }
+    throw new Error(`Concurrent updates to project ${project.id} exhausted CAS retries; requeueing`);
   } else {
     await prisma.sourceObject.update({ where: { id: existing.id }, data: { lastSeenAt: seenAt } });
   }
