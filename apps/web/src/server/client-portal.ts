@@ -182,6 +182,7 @@ export async function getClientPublishedProject(
         identifier,
         status: "PUBLISHED",
         currentVersion: { gt: 0 },
+        archivedAt: null,
       },
       // Fetch one extra row to detect truncation without a count query.
       include: { versions: { orderBy: { version: "desc" }, take: HISTORY_LIMIT + 1 } },

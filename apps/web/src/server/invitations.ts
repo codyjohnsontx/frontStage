@@ -267,6 +267,23 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
       return { ok: false, reason: "This invitation has expired. Ask for a new one." };
     }
 
+    // Enter the invitation's organization context (the identity/email
+    // context stays set alongside it).
+    await setRlsContext(tx, { organizationId: invitation.organizationId });
+
+    // Validate preconditions BEFORE claiming, so a doomed acceptance (e.g.
+    // the portal was deleted) leaves the invitation PENDING instead of
+    // committing an ACCEPTED claim with no membership.
+    let portal: { id: string; slug: string; name: string } | null = null;
+    if (isClientInvitation(invitation)) {
+      portal = await tx.portal.findFirst({
+        where: { id: invitation.scopeId ?? "", organizationId: invitation.organizationId },
+      });
+      if (!portal) {
+        return { ok: false, reason: "The portal for this invitation no longer exists." };
+      }
+    }
+
     // Atomically claim the invitation before any membership writes: exactly
     // one concurrent accept can flip PENDING -> ACCEPTED; every other racer
     // gets the already-processed message and performs no side effects.
@@ -278,18 +295,9 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
       return { ok: false, reason: "This invitation was already accepted." };
     }
 
-    // Enter the invitation's organization context for the membership writes.
-    await setRlsContext(tx, { organizationId: invitation.organizationId });
-
     // Client invitations create a PortalMembership — client users never
     // become members of the host organization.
-    if (isClientInvitation(invitation)) {
-      const portal = await tx.portal.findFirst({
-        where: { id: invitation.scopeId ?? "", organizationId: invitation.organizationId },
-      });
-      if (!portal) {
-        return { ok: false, reason: "The portal for this invitation no longer exists." };
-      }
+    if (portal) {
       const existingMembership = await tx.portalMembership.findFirst({
         where: { portalId: portal.id, userId: user.id },
       });

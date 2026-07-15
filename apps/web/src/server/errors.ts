@@ -14,7 +14,13 @@ export class ValidationError extends Error {
 /** Next.js control-flow "errors" (redirect/notFound) must never be handled. */
 function isNextControlFlow(err: unknown): boolean {
   const digest = (err as { digest?: unknown } | null)?.digest;
-  return typeof digest === "string" && (digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND");
+  return (
+    typeof digest === "string" &&
+    (digest.startsWith("NEXT_REDIRECT") ||
+      // Next 15 notFound()/forbidden()/unauthorized() digests.
+      digest.startsWith("NEXT_HTTP_ERROR_FALLBACK") ||
+      digest === "NEXT_NOT_FOUND")
+  );
 }
 
 /**

@@ -166,6 +166,7 @@ export default async function PortalPage({
             name="email"
             type="email"
             placeholder="client@company.com"
+            aria-label="Client email"
             required
             style={{ flex: 1, minWidth: 220 }}
           />
