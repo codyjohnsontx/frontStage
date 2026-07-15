@@ -37,16 +37,15 @@ const CAS_MAX_ATTEMPTS = 3;
 
 /**
  * Conflict policy for lost compare-and-swap claims: keep our delivery only
- * when its provider timestamp is strictly newer than what the concurrent
- * winner wrote. Unparseable timestamps count as "not newer" — discarding is
- * safe because scheduled reconciliation converges on provider truth.
+ * when BOTH provider timestamps parse and ours is strictly newer. Any
+ * unparseable timestamp (on either side) counts as "not newer" — discarding
+ * is safe because scheduled reconciliation converges on provider truth.
  */
 function isNewerThan(itemUpdatedAt: string, currentData: unknown): boolean {
   const currentUpdatedAt = (currentData as { updatedAt?: string } | null)?.updatedAt ?? "";
   const ours = Date.parse(itemUpdatedAt);
   const theirs = Date.parse(currentUpdatedAt);
-  if (Number.isNaN(ours)) return false;
-  if (Number.isNaN(theirs)) return true;
+  if (Number.isNaN(ours) || Number.isNaN(theirs)) return false;
   return ours > theirs;
 }
 
