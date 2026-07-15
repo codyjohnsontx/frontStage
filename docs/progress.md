@@ -2,6 +2,56 @@
 
 Honest record of what is actually built and verified. Newest first.
 
+## 2026-07-15 — Phase 0 slice 3: Phase 0 exit criteria closed
+
+**Built:**
+
+- `packages/database/test/rls.integration.test.ts` — cross-tenant probe
+  suite. Provisions a fresh `frontstage_test` database, applies every
+  migration via `prisma migrate deploy`, seeds two orgs as owner, then
+  attacks RLS as the `frontstage_app` role: no-context blindness, org-scoped
+  reads, WITH CHECK rejection of cross-org writes, zero-row cross-org
+  updates, identity-scoped visibility, invitation email binding, audit
+  append-only (owner included). 8 tests, all passing.
+- `packages/observability` — structured JSON logger with child contexts and
+  correlation ids (4 unit tests).
+- Correlation ids flow through the whole pipeline: domain command → audit
+  event → outbox event → job envelope → side-effect logs. Job payloads are
+  now `{ correlationId, data }` envelopes.
+- Worker: invitation-expiry sweep (every 60s) — expires overdue PENDING
+  invitations across all orgs and writes SYSTEM audit events atomically.
+- Migration `worker_role`: `frontstage_worker` with BYPASSRLS for the worker
+  only (trusted system component; documented in ADR-0002). Worker switched
+  off `frontstage_app`.
+
+**Verified live:**
+
+- Planted an invitation with a past expiry → sweep marked it EXPIRED and
+  wrote the `invitation.expired` SYSTEM audit event within one cycle.
+- Inserted an outbox event with correlation id `corr-test-123` → the same id
+  appeared in `outbox_event_routed`, `invitation_email_sent`, and
+  `job_completed` log lines; email delivered to Mailpit.
+- Full suite: 29 tests passing (11 authorization, 8 RLS integration,
+  6 web, 4 observability); typecheck clean; production build passes.
+
+**Phase 0 exit criteria status:**
+
+- Two organizations cannot access each other's data — **verified**
+  (automated probe suite + live browser test).
+- Role scopes are enforced — **verified** (unit tests + live contributor
+  denial).
+- Email-bound invitations work — **verified** (live flow + DB-level binding
+  tests).
+- Jobs and outbox events process reliably — **verified**, including the
+  failure path: with Mailpit stopped, the email job failed with
+  ECONNREFUSED, returned to PENDING with attempts=1, the error captured, and
+  a backoff scheduled; after Mailpit restarted, the retry (attempt 2)
+  completed and the email was delivered. Correlation id `corr-drill-1`
+  traceable across every log line.
+
+Remaining before Phase 1 features land: OAuth app registration (Google /
+Microsoft) when Cody is ready — dev sign-in covers local work until then.
+
 ## 2026-07-15 — Phase 0 slice 2: web app, invitations end-to-end, worker
 
 **Built:**

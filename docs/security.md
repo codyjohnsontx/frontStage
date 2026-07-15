@@ -38,13 +38,26 @@
   structurally tenant-scoped.
 - Logs carry correlation ids, never secrets or client content bodies.
 
+## Additional controls (added later in Phase 0)
+
+- The web app connects as `frontstage_app` (RLS enforced); the worker uses a
+  separate `frontstage_worker` role with BYPASSRLS for cross-tenant queue
+  processing and maintenance sweeps — never for request-serving code.
+- Automated cross-tenant probe suite
+  (`packages/database/test/rls.integration.test.ts`): 8 attacks against a
+  freshly migrated test database run in `pnpm test`.
+- Invitation expiry sweep: the worker expires overdue PENDING invitations
+  every 60s and writes SYSTEM audit events.
+- Correlation ids flow command → audit event → outbox → job → side-effect
+  logs (`@frontstage/observability`).
+
 ## Known gaps (tracked, intentional at this phase)
 
-- The dev superuser (`frontstage`) bypasses RLS by design; production app
-  connections must use the non-owner `frontstage_app` role. Wiring the app to
-  connect as `frontstage_app` happens with the web app slice.
-- `withOrganizationContext` exists but nothing enforces its use yet; an
-  integration test suite (cross-tenant probes) lands with the first API
-  routes.
-- MFA/session-duration policies: schema seam exists (`security_policies`
-  planned Phase 1), enforcement later per brief.
+- JWT sessions are not individually revocable; revocable DB sessions and
+  session-duration policies arrive with portal security policies (Phase 1+).
+- Dev-only credentials sign-in exists behind `ENABLE_DEV_LOGIN` and a
+  production hard-disable; remove entirely once OAuth apps are registered.
+- MFA: schema seam exists (`security_policies` planned Phase 1),
+  enforcement later per brief.
+- Integration tokens encryption-at-rest lands with the Linear connection
+  work (Phase 1).

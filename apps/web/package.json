@@ -12,6 +12,7 @@
   "dependencies": {
     "@frontstage/authorization": "workspace:*",
     "@frontstage/database": "workspace:*",
+    "@frontstage/observability": "workspace:*",
     "next": "^15.3.0",
     "next-auth": "5.0.0-beta.29",
     "react": "^19.1.0",

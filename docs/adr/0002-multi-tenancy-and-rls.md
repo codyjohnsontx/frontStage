@@ -22,6 +22,14 @@ Worker-infrastructure tables (`jobs`, `outbox_events`, flags) are not
 org-scoped by RLS; payloads carry `organization_id` and the worker re-enters
 org context when executing side effects.
 
+Database roles:
+
+| Role | Used by | RLS |
+| --- | --- | --- |
+| `frontstage` (owner) | migrations only | bypasses in dev (superuser) |
+| `frontstage_app` | web application | enforced (FORCE, no bypass) |
+| `frontstage_worker` | background worker | BYPASSRLS — trusted system component that drains cross-tenant queues and runs maintenance sweeps (e.g. invitation expiry). Never used by request-serving code. |
+
 ## Reasoning
 
 RLS alone is easy to get wrong silently (superuser bypass, forgotten GUC —
@@ -33,4 +41,11 @@ Database-per-tenant is operationally unjustifiable at pilot scale.
 
 Live-tested 2026-07-15: `frontstage_app` sees 0 organizations without
 context, exactly one with context set, and audit mutation raises even as
-superuser. Automated cross-tenant probe tests land with the first API routes.
+superuser.
+
+Automated: `packages/database/test/rls.integration.test.ts` provisions a
+fresh `frontstage_test` database, applies every migration, and runs 8
+cross-tenant probes as the app role (no-context blindness, org isolation on
+read and write, WITH CHECK rejection of cross-org inserts, zero-row cross-org
+updates, identity-scoped membership/org visibility, invitation email binding,
+audit append-only). Runs in `pnpm test` against the local dev Postgres.

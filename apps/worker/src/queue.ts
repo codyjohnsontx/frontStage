@@ -1,10 +1,20 @@
-import { Prisma, type JobStatus, type PrismaClient } from "@frontstage/database";
+import { Prisma, type PrismaClient } from "@frontstage/database";
+import type { Logger } from "@frontstage/observability";
+
+/**
+ * Every job payload is an envelope so the correlation id from the
+ * originating domain command travels through outbox → job → side effect.
+ */
+export interface JobEnvelope {
+  correlationId: string | null;
+  data: unknown;
+}
 
 export interface ClaimedJob {
   id: string;
   queue: string;
   type: string;
-  payload: unknown;
+  payload: JobEnvelope;
   attempts: number;
   max_attempts: number;
 }
@@ -33,6 +43,7 @@ function backoffDate(attempts: number): Date {
 export async function drainOutbox(
   prisma: PrismaClient,
   routes: Record<string, string>,
+  log: Logger,
   batchSize = 20,
 ): Promise<number> {
   return prisma.$transaction(async (tx) => {
@@ -56,24 +67,40 @@ export async function drainOutbox(
             lastError: `No route registered for event type "${event.event_type}"`,
           },
         });
+        log.error("outbox_event_unroutable", {
+          outboxEventId: event.id,
+          eventType: event.event_type,
+          correlationId: event.correlation_id,
+        });
         continue;
       }
+      const envelope: JobEnvelope = {
+        correlationId: event.correlation_id,
+        data: event.payload ?? {},
+      };
       await tx.job.create({
         data: {
           type: jobType,
-          payload: (event.payload ?? {}) as Prisma.InputJsonValue,
+          payload: envelope as unknown as Prisma.InputJsonValue,
         },
       });
       await tx.outboxEvent.update({
         where: { id: event.id },
         data: { status: "PROCESSED", processedAt: new Date() },
       });
+      log.info("outbox_event_routed", {
+        outboxEventId: event.id,
+        eventType: event.event_type,
+        jobType,
+        organizationId: event.organization_id,
+        correlationId: event.correlation_id,
+      });
     }
     return events.length;
   });
 }
 
-export type JobHandler = (payload: unknown) => Promise<void>;
+export type JobHandler = (data: unknown, context: { correlationId: string | null }) => Promise<void>;
 
 /**
  * Claim due jobs (SKIP LOCKED), mark them RUNNING, then execute outside the
@@ -84,6 +111,7 @@ export async function runDueJobs(
   prisma: PrismaClient,
   handlers: Record<string, JobHandler>,
   workerId: string,
+  log: Logger,
   batchSize = 5,
 ): Promise<number> {
   const claimed = await prisma.$transaction(async (tx) => {
@@ -108,15 +136,19 @@ export async function runDueJobs(
   for (const job of claimed) {
     const handler = handlers[job.type];
     const attempts = job.attempts + 1; // incremented at claim time
+    const correlationId = job.payload?.correlationId ?? null;
+    const jobLog = log.child({ jobId: job.id, jobType: job.type, correlationId, attempts });
+    const startedAt = Date.now();
     try {
       if (!handler) {
         throw new Error(`No handler registered for job type "${job.type}"`);
       }
-      await handler(job.payload);
+      await handler(job.payload?.data, { correlationId });
       await prisma.job.update({
         where: { id: job.id },
-        data: { status: "COMPLETED" satisfies JobStatus, lockedAt: null, lockedBy: null },
+        data: { status: "COMPLETED", lockedAt: null, lockedBy: null },
       });
+      jobLog.info("job_completed", { durationMs: Date.now() - startedAt });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const exhausted = attempts >= job.max_attempts;
@@ -132,17 +164,11 @@ export async function runDueJobs(
           lockedBy: null,
         },
       });
-      console.error(
-        JSON.stringify({
-          level: "error",
-          msg: "job_failed",
-          jobId: job.id,
-          type: job.type,
-          attempts,
-          exhausted,
-          error: message,
-        }),
-      );
+      jobLog.error("job_failed", {
+        exhausted,
+        error: message,
+        durationMs: Date.now() - startedAt,
+      });
     }
   }
   return claimed.length;

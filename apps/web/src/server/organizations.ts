@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { getPrisma, withRlsContext } from "@frontstage/database";
+import { createLogger, newCorrelationId } from "@frontstage/observability";
 import type { SessionUser } from "@/server/session";
 import { recordAuditEvent } from "@/server/audit";
 import { slugify } from "@/server/slug";
+
+const log = createLogger({ component: "web.organizations" });
 
 export interface OrganizationSummary {
   id: string;
@@ -59,6 +62,7 @@ export async function createOrganization(
   // Suffix keeps slugs unique without a pre-read (we cannot see other orgs'
   // slugs under RLS, and a global read would leak tenant names).
   const slug = `${baseSlug}-${organizationId.slice(0, 6)}`;
+  const correlationId = newCorrelationId();
 
   return withRlsContext(
     getPrisma(),
@@ -86,8 +90,10 @@ export async function createOrganization(
         action: "organization.created",
         resourceType: "organization",
         resourceId: organizationId,
+        correlationId,
         metadata: { name: trimmed, slug },
       });
+      log.info("organization_created", { organizationId, slug, correlationId });
       return { id: org.id, name: org.name, slug: org.slug };
     },
   );

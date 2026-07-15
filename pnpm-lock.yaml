@@ -16,6 +16,9 @@ importers:
       '@frontstage/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@frontstage/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       next:
         specifier: ^15.3.0
         version: 15.5.20(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -53,6 +56,9 @@ importers:
       '@frontstage/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@frontstage/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
       dotenv:
         specifier: ^16.4.0
         version: 16.6.1
@@ -100,6 +106,18 @@ importers:
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)
+
+  packages/observability:
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@20.19.43)
 
 packages:
 

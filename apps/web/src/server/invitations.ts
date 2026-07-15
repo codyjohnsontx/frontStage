@@ -1,5 +1,6 @@
 import { getPrisma, setRlsContext, withRlsContext, type RoleKey } from "@frontstage/database";
 import { INTERNAL_ROLES, type RoleKey as AuthzRoleKey } from "@frontstage/authorization";
+import { createLogger, newCorrelationId } from "@frontstage/observability";
 import type { SessionUser } from "@/server/session";
 import { assertPermission, loadAuthorizationContext } from "@/server/authz";
 import { recordAuditEvent } from "@/server/audit";
@@ -7,6 +8,8 @@ import { enqueueOutboxEvent } from "@/server/outbox";
 import { generateInvitationToken, hashToken } from "@/server/tokens";
 
 const INVITATION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+
+const log = createLogger({ component: "web.invitations" });
 
 /** Org-level roles that can be granted through the Phase 0 invite flow. */
 const INVITABLE_ROLES: readonly RoleKey[] = [
@@ -77,6 +80,7 @@ export async function inviteMember(
   const token = generateInvitationToken();
   const appUrl = process.env.APP_URL ?? "http://localhost:3000";
   const acceptUrl = `${appUrl}/invitations/accept?token=${token}`;
+  const correlationId = newCorrelationId();
 
   await withRlsContext(getPrisma(), { userId: user.id, organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
@@ -101,6 +105,7 @@ export async function inviteMember(
       action: "invitation.created",
       resourceType: "invitation",
       resourceId: invitation.id,
+      correlationId,
       metadata: { email: normalizedEmail, roleKey },
     });
     // The raw accept URL is carried only in the outbox payload so the worker
@@ -108,6 +113,7 @@ export async function inviteMember(
     await enqueueOutboxEvent(tx, {
       organizationId,
       eventType: "invitation.created",
+      correlationId,
       payload: {
         invitationId: invitation.id,
         email: normalizedEmail,
@@ -117,6 +123,11 @@ export async function inviteMember(
         acceptUrl,
         expiresAt: invitation.expiresAt.toISOString(),
       },
+    });
+    log.info("invitation_created", {
+      organizationId,
+      invitationId: invitation.id,
+      correlationId,
     });
   });
 }
@@ -272,13 +283,20 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
       where: { id: invitation.id },
       data: { status: "ACCEPTED", acceptedById: user.id, acceptedAt: new Date() },
     });
+    const correlationId = newCorrelationId();
     await recordAuditEvent(tx, {
       organizationId: invitation.organizationId,
       actorUserId: user.id,
       action: "invitation.accepted",
       resourceType: "invitation",
       resourceId: invitation.id,
+      correlationId,
       metadata: { email: invitation.email, roleKey: invitation.roleKey },
+    });
+    log.info("invitation_accepted", {
+      organizationId: invitation.organizationId,
+      invitationId: invitation.id,
+      correlationId,
     });
 
     const org = await tx.organization.findUniqueOrThrow({
