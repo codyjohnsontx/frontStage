@@ -60,13 +60,13 @@ internal and public communication remain correctly separated.
   (`/portal/…`, simpler nav than the internal console), client overview
   rendering **published snapshots only**, org/portal context always
   visible, cross-client isolation probes added to the RLS suite.
-- 🔜 **2.2 Requests** — request forms per portal, client submission with
+- ✅ **2.2 Requests** — request forms per portal, client submission with
   idempotency key, initial state "Received — Not Yet Committed" with the
   no-commitment explainer, Linear Triage issue creation through the outbox
   (adapter gains `createWorkItem`; fixture mode simulates), client priority
   vs internal delivery priority stored separately, request list + detail
   for both sides.
-- ⬜ **2.3 Two-track communication** — public replies vs internal notes
+- 🔜 **2.3 Two-track communication** — public replies vs internal notes
   (structurally unreachable by client roles; adversarial leak tests like
   the projection boundary), request-for-clarification, formal accept /
   decline with reason, duplicate linking (link to existing Linear issue,

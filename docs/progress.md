@@ -2,6 +2,56 @@
 
 Honest record of what is actually built and verified. Newest first.
 
+## 2026-07-16 — Slice 2.2: client requests → Linear Triage
+
+**Built:**
+
+- `client_requests` table (forced RLS + composite tenant FK to portals):
+  identifier (APEX-REQ-NNN from an atomic per-client counter), type/status
+  enums, SEPARATE client priority and internal priority, internal-only
+  Linear linkage columns (issue id/identifier, sync state, sync error).
+- Adapter `createWorkItem`: real Linear `issueCreate` mutation (requires a
+  destination team via the new `defaultTeamId` connection column) and a
+  fixture mode returning official-shaped references.
+- Submission pipeline: client submits → request committed immediately with
+  status "Received — Not Yet Committed" + audit + outbox event, all atomic;
+  worker job `linear.create_issue` creates the Triage issue with retry/
+  backoff; a missing connection parks the request FAILED (visible
+  internally, never to clients). Idempotency keys (§44): same key + same
+  content returns the original identifier; same key + different content is
+  rejected.
+- `requestClientView()` — second leak boundary, mirroring the projection
+  one: internal priority, Linear ids, and sync errors exist on the input
+  type and provably never reach client output (adversarial unit tests).
+- Client UI: Requests nav, list, submission form (with the no-commitment
+  explainer), detail page. View-only roles see an explanation instead of a
+  form and are rejected server-side.
+- Internal UI: "Client requests" card on the portal page — requester,
+  type/status, client priority, internal priority setter (request.triage),
+  Linear ref + sync state.
+
+**Verified live (scripted HTTP, dev servers on :3100):**
+
+1. Dana (CLIENT_CONTRIBUTOR) submitted a bug → 303 to APEX-REQ-001, status
+   "Received — Not Yet Committed".
+2. Worker created fixture Triage issue TRI-78CA; request SYNCED; one
+   correlation id across submit → outbox → job → log.
+3. Idempotent resubmit (same key) returned the same identifier; row count
+   stayed 1.
+4. Client detail page leak check: no Linear identifiers, no sync state, no
+   internal priority (the only "sync" match was the HTML async attribute).
+5. Carol (CLIENT_VIEWER): form replaced by a view-only notice AND the
+   direct POST rejected server-side.
+6. Cody set internal priority LOW while client priority stayed HIGH; both
+   visible internally, audit events recorded for submit + triage.
+
+**Test suite:** 65 passing (adds request leak-boundary tests + 2
+client_requests RLS probes incl. the composite-FK cross-portal rejection).
+
+**Note:** the live-drill session-drop mystery was the test harness invoking
+the layout's sign-out action (first $ACTION_ID on the page), not an app
+bug.
+
 ## 2026-07-15 — Slice 2.1: clients get in the door
 
 **Built:**

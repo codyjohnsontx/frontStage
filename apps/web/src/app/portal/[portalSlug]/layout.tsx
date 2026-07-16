@@ -34,7 +34,12 @@ export default async function ClientPortalLayout({
             {overview.clientOrganizationName} · delivered by {overview.hostOrganizationName}
           </span>
         </span>
-        <span className="muted">
+        <span style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <nav style={{ display: "flex", gap: "1rem" }}>
+            <Link href={`/portal/${portalSlug}`}>Overview</Link>
+            <Link href={`/portal/${portalSlug}/requests`}>Requests</Link>
+          </nav>
+          <span className="muted">
           {user.name ?? user.email}
           <form
             action={async () => {
@@ -47,6 +52,7 @@ export default async function ClientPortalLayout({
               Sign out
             </button>
           </form>
+          </span>
         </span>
       </header>
       <main className="container">{children}</main>

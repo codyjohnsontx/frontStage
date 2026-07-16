@@ -30,6 +30,7 @@ model User {
   sessions            Session[]
   memberships         OrganizationMembership[]
   portalMemberships   PortalMembership[]
+  clientRequests      ClientRequest[]
   invitationsSent     Invitation[]             @relation("InvitationInviter")
   invitationsAccepted Invitation[]             @relation("InvitationAcceptor")
 
@@ -362,6 +363,8 @@ model IntegrationConnection {
   mode                  String              @default("oauth")
   workspaceId           String?             @map("workspace_id")
   workspaceName         String?             @map("workspace_name")
+  // Destination team for outbound issue creation (real Linear mode).
+  defaultTeamId         String?             @map("default_team_id")
   encryptedAccessToken  String?             @map("encrypted_access_token")
   encryptedRefreshToken String?             @map("encrypted_refresh_token")
   tokenExpiresAt        DateTime?           @map("token_expires_at")
@@ -460,6 +463,7 @@ model ClientOrganization {
   slug              String
   identifierPrefix  String   @map("identifier_prefix")
   nextProjectNumber Int      @default(1) @map("next_project_number")
+  nextRequestNumber Int      @default(1) @map("next_request_number")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -484,6 +488,7 @@ model Portal {
   clientOrganization ClientOrganization @relation(fields: [clientOrganizationId], references: [id], onDelete: Cascade)
   externalProjects   ExternalProject[]
   memberships        PortalMembership[]
+  clientRequests     ClientRequest[]
 
   @@unique([organizationId, slug])
   // Target for the composite tenant-alignment FK from portal_memberships.
@@ -513,6 +518,75 @@ model PortalMembership {
   @@index([organizationId])
   @@index([userId])
   @@map("portal_memberships")
+}
+
+enum RequestType {
+  FEATURE
+  BUG
+  CHANGE
+  QUESTION
+  SUPPORT
+  OTHER
+
+  @@map("request_type")
+}
+
+enum RequestStatus {
+  RECEIVED
+  IN_REVIEW
+  ACCEPTED
+  DECLINED
+  CLOSED
+
+  @@map("request_status")
+}
+
+enum ClientPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+
+  @@map("client_priority")
+}
+
+enum SyncState {
+  PENDING
+  SYNCED
+  FAILED
+
+  @@map("sync_state")
+}
+
+// Client requests are Frontstage-owned intake. Submission never implies a
+// commitment (§27): the initial state reads "Received — Not Yet Committed".
+// Client priority and internal delivery priority are separate fields, and
+// Linear linkage columns are internal-only (never rendered client-side).
+model ClientRequest {
+  id                    String         @id @default(uuid()) @db.Uuid
+  organizationId        String         @map("organization_id") @db.Uuid
+  portalId              String         @map("portal_id") @db.Uuid
+  identifier            String
+  type                  RequestType
+  title                 String
+  description           String
+  status                RequestStatus  @default(RECEIVED)
+  clientPriority        ClientPriority @default(NORMAL) @map("client_priority")
+  internalPriority      ClientPriority? @map("internal_priority")
+  createdById           String         @map("created_by_id") @db.Uuid
+  linearIssueId         String?        @map("linear_issue_id")
+  linearIssueIdentifier String?        @map("linear_issue_identifier")
+  linearSyncState       SyncState      @default(PENDING) @map("linear_sync_state")
+  linearSyncError       String?        @map("linear_sync_error")
+  createdAt             DateTime       @default(now()) @map("created_at")
+  updatedAt             DateTime       @updatedAt @map("updated_at")
+
+  portal    Portal @relation(fields: [organizationId, portalId], references: [organizationId, id], onDelete: Cascade)
+  createdBy User   @relation(fields: [createdById], references: [id])
+
+  @@unique([organizationId, identifier])
+  @@index([organizationId, portalId, createdAt])
+  @@map("client_requests")
 }
 
 enum ProjectionStatus {

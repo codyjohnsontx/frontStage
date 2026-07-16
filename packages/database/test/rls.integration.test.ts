@@ -300,6 +300,61 @@ describe("cross-client isolation (portal memberships)", () => {
   });
 });
 
+describe("client_requests isolation", () => {
+  it("requests are invisible outside their organization context", async () => {
+    await withRlsContext(app, { organizationId: ORG_A }, (tx) =>
+      tx.clientRequest.create({
+        data: {
+          organizationId: ORG_A,
+          portalId: PORTAL_A,
+          identifier: "CA-REQ-001",
+          type: "BUG",
+          title: "seed request",
+          description: "d",
+          createdById: USER_CAROL,
+        },
+      }),
+    );
+    await withRlsContext(app, { organizationId: ORG_B }, async (tx) => {
+      expect(await tx.clientRequest.count()).toBe(0);
+    });
+    expect(await app.clientRequest.count()).toBe(0); // no context at all
+  });
+
+  it("cannot write a request into another org, nor pair org A with portal B", async () => {
+    await expect(
+      withRlsContext(app, { organizationId: ORG_A }, (tx) =>
+        tx.clientRequest.create({
+          data: {
+            organizationId: ORG_B,
+            portalId: PORTAL_B,
+            identifier: "CB-REQ-001",
+            type: "BUG",
+            title: "x",
+            description: "d",
+            createdById: USER_CAROL,
+          },
+        }),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      withRlsContext(app, { organizationId: ORG_A }, (tx) =>
+        tx.clientRequest.create({
+          data: {
+            organizationId: ORG_A,
+            portalId: PORTAL_B,
+            identifier: "CA-REQ-002",
+            type: "BUG",
+            title: "x",
+            description: "d",
+            createdById: USER_CAROL,
+          },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+});
+
 describe("audit append-only", () => {
   it("rejects UPDATE and DELETE even for the table owner", async () => {
     const event = await owner.auditEvent.findFirstOrThrow({

@@ -5,12 +5,15 @@ import { getMyOrganizationBySlug } from "@/server/organizations";
 import { getPortalBySlug } from "@/server/clients";
 import { listAvailableProjectSources } from "@/server/projections";
 import { listPortalClientAccess } from "@/server/portal-members";
+import { listPortalRequestsInternal } from "@/server/client-requests";
+import { PRIORITY_LABELS, REQUEST_STATUS_LABELS, REQUEST_TYPE_LABELS } from "@/lib/request-labels";
 import { PermissionDeniedError } from "@/server/authz";
 import {
   createDraftAction,
   inviteClientAction,
   removeClientMemberAction,
   revokeClientInvitationAction,
+  setInternalPriorityAction,
 } from "./actions";
 
 export default async function PortalPage({
@@ -29,6 +32,7 @@ export default async function PortalPage({
   if (!portal) notFound();
 
   const availableSources = await listAvailableProjectSources(user, org.id, portal.id);
+  const requests = await listPortalRequestsInternal(user, org.id, portal.id);
   // The client-access card is only shown to members who may manage it.
   let clientAccess: Awaited<ReturnType<typeof listPortalClientAccess>> | null = null;
   try {
@@ -82,6 +86,77 @@ export default async function PortalPage({
                     <Link className="button" href={`/o/${org.slug}/portals/${portal.slug}/projects/${p.identifier}`}>
                       Curate
                     </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Client requests</h2>
+        {requests.length === 0 ? (
+          <p className="muted">
+            No requests yet. Client submissions land here immediately and create a Linear
+            Triage issue — client urgency never reprioritizes engineering work by itself.
+          </p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Request</th>
+                <th>From</th>
+                <th>Client priority</th>
+                <th>Internal priority</th>
+                <th>Linear</th>
+              </tr>
+            </thead>
+            <tbody>
+              {requests.map((r) => (
+                <tr key={r.id}>
+                  <td className="muted">{r.identifier}</td>
+                  <td>
+                    {r.title}
+                    <div className="muted" style={{ fontSize: "0.78rem" }}>
+                      {REQUEST_TYPE_LABELS[r.type] ?? r.type} ·{" "}
+                      {REQUEST_STATUS_LABELS[r.status] ?? r.status}
+                    </div>
+                  </td>
+                  <td className="muted">{r.createdBy.name ?? r.createdBy.email}</td>
+                  <td>
+                    <span className="role-tag">
+                      {PRIORITY_LABELS[r.clientPriority] ?? r.clientPriority}
+                    </span>
+                  </td>
+                  <td>
+                    <form action={setInternalPriorityAction} className="form-row" style={{ flexWrap: "nowrap" }}>
+                      <input type="hidden" name="slug" value={org.slug} />
+                      <input type="hidden" name="portalSlug" value={portal.slug} />
+                      <input type="hidden" name="requestId" value={r.id} />
+                      <select
+                        name="internalPriority"
+                        defaultValue={r.internalPriority ?? ""}
+                        aria-label="Internal priority"
+                      >
+                        <option value="" disabled>
+                          Not set
+                        </option>
+                        <option value="LOW">Low</option>
+                        <option value="NORMAL">Normal</option>
+                        <option value="HIGH">High</option>
+                        <option value="URGENT">Urgent</option>
+                      </select>
+                      <button type="submit" className="secondary">Set</button>
+                    </form>
+                  </td>
+                  <td className="muted">
+                    {r.linearSyncState === "SYNCED"
+                      ? r.linearIssueIdentifier ?? "synced"
+                      : r.linearSyncState === "FAILED"
+                        ? `failed: ${r.linearSyncError ?? "unknown"}`
+                        : "sync pending"}
                   </td>
                 </tr>
               ))}

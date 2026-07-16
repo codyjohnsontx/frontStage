@@ -199,6 +199,38 @@ export async function fetchIssueById(
   return data.issue ? toCanonicalWorkItem(issueNode.parse(data.issue)) : null;
 }
 
+/**
+ * Create an issue (client-request intake -> Triage). Linear routes new
+ * issues to the team's triage/default intake state when none is specified.
+ */
+export async function createIssue(
+  accessToken: string,
+  input: { teamId: string; title: string; description?: string },
+): Promise<{ id: string; identifier?: string; url?: string }> {
+  const data = await gql<{
+    issueCreate: { success: boolean; issue: { id: string; identifier: string; url: string } | null };
+  }>(
+    accessToken,
+    `mutation CreateIssue($input: IssueCreateInput!) {
+      issueCreate(input: $input) {
+        success
+        issue { id identifier url }
+      }
+    }`,
+    {
+      input: {
+        teamId: input.teamId,
+        title: input.title,
+        ...(input.description ? { description: input.description } : {}),
+      },
+    },
+  );
+  if (!data.issueCreate.success || !data.issueCreate.issue) {
+    throw new Error("Linear issueCreate did not succeed");
+  }
+  return data.issueCreate.issue;
+}
+
 export async function fetchViewerWorkspace(
   accessToken: string,
 ): Promise<{ id: string; name: string }> {

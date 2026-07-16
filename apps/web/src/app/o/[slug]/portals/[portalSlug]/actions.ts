@@ -12,6 +12,7 @@ import {
   removePortalMember,
 } from "@/server/portal-members";
 import { revokeInvitation } from "@/server/invitations";
+import { setInternalPriority } from "@/server/client-requests";
 import { actionErrorMessage } from "@/server/errors";
 
 function portalPath(slug: string, portalSlug: string): string {
@@ -94,6 +95,29 @@ export async function removeClientMemberAction(formData: FormData): Promise<void
       err,
       "Could not remove the member.",
       "You do not have permission to manage this portal's members.",
+    );
+    redirect(`${path}?error=${encodeURIComponent(message)}`);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
+
+export async function setInternalPriorityAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const slug = String(formData.get("slug") ?? "");
+  const portalSlug = String(formData.get("portalSlug") ?? "");
+  const requestId = String(formData.get("requestId") ?? "");
+  const internalPriority = String(formData.get("internalPriority") ?? "");
+  const org = await getMyOrganizationBySlug(user, slug);
+  if (!org) redirect("/orgs");
+  const path = portalPath(slug, portalSlug);
+  try {
+    await setInternalPriority(user, org.id, requestId, internalPriority);
+  } catch (err) {
+    const message = actionErrorMessage(
+      err,
+      "Could not set the internal priority.",
+      "You do not have permission to triage requests.",
     );
     redirect(`${path}?error=${encodeURIComponent(message)}`);
   }
