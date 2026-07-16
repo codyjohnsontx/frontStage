@@ -8,9 +8,14 @@ import {
 import type { TransactionClient } from "@frontstage/database";
 
 /**
- * Build the actor's authorization context from membership + role rows.
- * Must run inside a transaction that already has the organization RLS
- * context set. Returns null when the user is not an active member.
+ * Build an INTERNAL actor's authorization context from organization
+ * membership + scoped role rows. Must run inside a transaction that already
+ * has the organization RLS context set. Returns null when the user is not
+ * an active internal member — a non-null result is the membership gate for
+ * internal console services, so client portal memberships deliberately do
+ * NOT count here. Client flows prove access via PortalMembership in
+ * client-portal.ts and will get their own context builder when client
+ * capability checks arrive (Phase 2.2).
  */
 export async function loadAuthorizationContext(
   tx: TransactionClient,

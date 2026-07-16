@@ -9,7 +9,7 @@ export async function acceptInvitationAction(formData: FormData): Promise<void> 
   const token = String(formData.get("token") ?? "");
   const result = await acceptInvitation(user, token);
   if (result.ok) {
-    redirect(`/o/${result.organizationSlug}?joined=1`);
+    redirect(result.kind === "portal" ? `/portal/${result.slug}?joined=1` : `/o/${result.slug}?joined=1`);
   }
   redirect(`/invitations/accept?token=${encodeURIComponent(token)}&error=${encodeURIComponent(result.reason)}`);
 }

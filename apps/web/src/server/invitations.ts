@@ -1,5 +1,5 @@
 import { getPrisma, setRlsContext, withRlsContext, type RoleKey } from "@frontstage/database";
-import { INTERNAL_ROLES, type RoleKey as AuthzRoleKey } from "@frontstage/authorization";
+import { INTERNAL_ROLES, isClientRole, type RoleKey as AuthzRoleKey } from "@frontstage/authorization";
 import { createLogger, newCorrelationId } from "@frontstage/observability";
 import type { SessionUser } from "@/server/session";
 import { assertPermission, loadAuthorizationContext } from "@/server/authz";
@@ -140,12 +140,22 @@ export async function revokeInvitation(
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
     if (!context) throw new Error("Not a member of this organization.");
-    assertPermission(context, "organization.manage", { organizationId });
 
     const invitation = await tx.invitation.findFirst({
       where: { id: invitationId, organizationId, status: "PENDING" },
     });
     if (!invitation) throw new Error("Invitation not found or already resolved.");
+
+    // Portal-scoped invitations are manageable by portal admins; org-level
+    // ones require organization.manage.
+    if (invitation.scopeType === "PORTAL" && invitation.scopeId) {
+      assertPermission(context, "portal.members.manage", {
+        organizationId,
+        portalId: invitation.scopeId,
+      });
+    } else {
+      assertPermission(context, "organization.manage", { organizationId });
+    }
 
     await tx.invitation.update({
       where: { id: invitation.id },
@@ -192,6 +202,17 @@ export async function previewInvitation(
       return { ok: false, reason: "This invitation has expired. Ask for a new one." };
     }
     await setRlsContext(tx, { organizationId: invitation.organizationId });
+    if (isClientInvitation(invitation)) {
+      const portal = await tx.portal.findFirst({ where: { id: invitation.scopeId ?? "" } });
+      return {
+        ok: true,
+        organizationName: portal
+          ? `the ${portal.name} client portal`
+          : "a client portal",
+        roleKey: invitation.roleKey,
+        email: invitation.email,
+      };
+    }
     const org = await tx.organization.findUniqueOrThrow({
       where: { id: invitation.organizationId },
     });
@@ -204,8 +225,14 @@ export async function previewInvitation(
   });
 }
 
+/** Client-role + portal-scoped invitations create PortalMemberships. */
+function isClientInvitation(invitation: { roleKey: RoleKey; scopeType: string }): boolean {
+  return invitation.scopeType === "PORTAL" && isClientRole(invitation.roleKey);
+}
+
 export type AcceptResult =
-  | { ok: true; organizationSlug: string; organizationName: string }
+  | { ok: true; kind: "organization"; slug: string; name: string }
+  | { ok: true; kind: "portal"; slug: string; name: string }
   | { ok: false; reason: string };
 
 /**
@@ -233,15 +260,104 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
       return { ok: false, reason: `This invitation was already ${invitation.status.toLowerCase()}.` };
     }
     if (invitation.expiresAt.getTime() < Date.now()) {
-      await tx.invitation.update({
-        where: { id: invitation.id },
+      // PENDING-guarded so an expiry racing a concurrent acceptance can
+      // never overwrite ACCEPTED with EXPIRED.
+      await tx.invitation.updateMany({
+        where: { id: invitation.id, status: "PENDING" },
         data: { status: "EXPIRED" },
       });
       return { ok: false, reason: "This invitation has expired. Ask for a new one." };
     }
 
-    // Enter the invitation's organization context for the membership writes.
+    // Enter the invitation's organization context (the identity/email
+    // context stays set alongside it).
     await setRlsContext(tx, { organizationId: invitation.organizationId });
+
+    // Validate preconditions BEFORE claiming, so a doomed acceptance (e.g.
+    // the portal was deleted) leaves the invitation PENDING instead of
+    // committing an ACCEPTED claim with no membership.
+    let portal: { id: string; slug: string; name: string } | null = null;
+    if (isClientInvitation(invitation)) {
+      portal = await tx.portal.findFirst({
+        where: { id: invitation.scopeId ?? "", organizationId: invitation.organizationId },
+      });
+      if (!portal) {
+        return { ok: false, reason: "The portal for this invitation no longer exists." };
+      }
+    }
+
+    // Atomically claim the invitation before any membership writes: exactly
+    // one concurrent accept can flip PENDING -> ACCEPTED, and only while it
+    // is still unexpired at claim time; every other racer gets the
+    // already-processed message and performs no side effects.
+    const claimed = await tx.invitation.updateMany({
+      where: { id: invitation.id, status: "PENDING", expiresAt: { gt: new Date() } },
+      data: { status: "ACCEPTED", acceptedById: user.id, acceptedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      // Zero rows means either a concurrent racer resolved it or it expired
+      // at claim time — report what actually happened.
+      const current = await tx.invitation.findFirst({ where: { id: invitation.id } });
+      if (current?.status === "PENDING") {
+        const expired = await tx.invitation.updateMany({
+          where: { id: invitation.id, status: "PENDING" },
+          data: { status: "EXPIRED" },
+        });
+        // Only report expiry if THIS transaction performed the transition;
+        // a racer may have resolved the row between the re-read and here.
+        if (expired.count > 0) {
+          return { ok: false, reason: "This invitation has expired. Ask for a new one." };
+        }
+        const resolved = await tx.invitation.findFirst({ where: { id: invitation.id } });
+        return {
+          ok: false,
+          reason: `This invitation was already ${(resolved?.status ?? "ACCEPTED").toLowerCase()}.`,
+        };
+      }
+      return {
+        ok: false,
+        reason: `This invitation was already ${(current?.status ?? "ACCEPTED").toLowerCase()}.`,
+      };
+    }
+
+    // Client invitations create a PortalMembership — client users never
+    // become members of the host organization.
+    if (portal) {
+      const existingMembership = await tx.portalMembership.findFirst({
+        where: { portalId: portal.id, userId: user.id },
+      });
+      if (existingMembership) {
+        await tx.portalMembership.update({
+          where: { id: existingMembership.id },
+          data: { status: "ACTIVE", roleKey: invitation.roleKey },
+        });
+      } else {
+        await tx.portalMembership.create({
+          data: {
+            organizationId: invitation.organizationId,
+            portalId: portal.id,
+            userId: user.id,
+            roleKey: invitation.roleKey,
+          },
+        });
+      }
+      const correlationId = newCorrelationId();
+      await recordAuditEvent(tx, {
+        organizationId: invitation.organizationId,
+        actorUserId: user.id,
+        action: "portal.invitation.accepted",
+        resourceType: "invitation",
+        resourceId: invitation.id,
+        correlationId,
+        metadata: { email: invitation.email, roleKey: invitation.roleKey, portalId: portal.id },
+      });
+      log.info("portal_invitation_accepted", {
+        organizationId: invitation.organizationId,
+        portalId: portal.id,
+        correlationId,
+      });
+      return { ok: true, kind: "portal", slug: portal.slug, name: portal.name };
+    }
 
     let membership = await tx.organizationMembership.findFirst({
       where: { organizationId: invitation.organizationId, userId: user.id },
@@ -279,10 +395,6 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
         },
       });
     }
-    await tx.invitation.update({
-      where: { id: invitation.id },
-      data: { status: "ACCEPTED", acceptedById: user.id, acceptedAt: new Date() },
-    });
     const correlationId = newCorrelationId();
     await recordAuditEvent(tx, {
       organizationId: invitation.organizationId,
@@ -302,6 +414,6 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
     const org = await tx.organization.findUniqueOrThrow({
       where: { id: invitation.organizationId },
     });
-    return { ok: true, organizationSlug: org.slug, organizationName: org.name };
+    return { ok: true, kind: "organization", slug: org.slug, name: org.name };
   });
 }
