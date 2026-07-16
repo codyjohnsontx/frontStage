@@ -299,11 +299,20 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
       // at claim time — report what actually happened.
       const current = await tx.invitation.findFirst({ where: { id: invitation.id } });
       if (current?.status === "PENDING") {
-        await tx.invitation.updateMany({
+        const expired = await tx.invitation.updateMany({
           where: { id: invitation.id, status: "PENDING" },
           data: { status: "EXPIRED" },
         });
-        return { ok: false, reason: "This invitation has expired. Ask for a new one." };
+        // Only report expiry if THIS transaction performed the transition;
+        // a racer may have resolved the row between the re-read and here.
+        if (expired.count > 0) {
+          return { ok: false, reason: "This invitation has expired. Ask for a new one." };
+        }
+        const resolved = await tx.invitation.findFirst({ where: { id: invitation.id } });
+        return {
+          ok: false,
+          reason: `This invitation was already ${(resolved?.status ?? "ACCEPTED").toLowerCase()}.`,
+        };
       }
       return {
         ok: false,
