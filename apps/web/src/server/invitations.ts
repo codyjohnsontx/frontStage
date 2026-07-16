@@ -260,8 +260,10 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
       return { ok: false, reason: `This invitation was already ${invitation.status.toLowerCase()}.` };
     }
     if (invitation.expiresAt.getTime() < Date.now()) {
-      await tx.invitation.update({
-        where: { id: invitation.id },
+      // PENDING-guarded so an expiry racing a concurrent acceptance can
+      // never overwrite ACCEPTED with EXPIRED.
+      await tx.invitation.updateMany({
+        where: { id: invitation.id, status: "PENDING" },
         data: { status: "EXPIRED" },
       });
       return { ok: false, reason: "This invitation has expired. Ask for a new one." };
@@ -285,10 +287,11 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
     }
 
     // Atomically claim the invitation before any membership writes: exactly
-    // one concurrent accept can flip PENDING -> ACCEPTED; every other racer
-    // gets the already-processed message and performs no side effects.
+    // one concurrent accept can flip PENDING -> ACCEPTED, and only while it
+    // is still unexpired at claim time; every other racer gets the
+    // already-processed message and performs no side effects.
     const claimed = await tx.invitation.updateMany({
-      where: { id: invitation.id, status: "PENDING" },
+      where: { id: invitation.id, status: "PENDING", expiresAt: { gt: new Date() } },
       data: { status: "ACCEPTED", acceptedById: user.id, acceptedAt: new Date() },
     });
     if (claimed.count === 0) {
