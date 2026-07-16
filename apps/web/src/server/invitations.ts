@@ -295,7 +295,20 @@ export async function acceptInvitation(user: SessionUser, token: string): Promis
       data: { status: "ACCEPTED", acceptedById: user.id, acceptedAt: new Date() },
     });
     if (claimed.count === 0) {
-      return { ok: false, reason: "This invitation was already accepted." };
+      // Zero rows means either a concurrent racer resolved it or it expired
+      // at claim time — report what actually happened.
+      const current = await tx.invitation.findFirst({ where: { id: invitation.id } });
+      if (current?.status === "PENDING") {
+        await tx.invitation.updateMany({
+          where: { id: invitation.id, status: "PENDING" },
+          data: { status: "EXPIRED" },
+        });
+        return { ok: false, reason: "This invitation has expired. Ask for a new one." };
+      }
+      return {
+        ok: false,
+        reason: `This invitation was already ${(current?.status ?? "ACCEPTED").toLowerCase()}.`,
+      };
     }
 
     // Client invitations create a PortalMembership — client users never
