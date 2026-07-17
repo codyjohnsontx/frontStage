@@ -69,6 +69,30 @@ export async function submitClientRequest(
     .digest("hex");
   const correlationId = newCorrelationId();
 
+  // Concurrent submissions with the same idempotency key race to insert the
+  // idempotency record; the loser's transaction rolls back with P2002 and a
+  // retry finds the winner's record, returning the original identifier.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      return await submitOnce(user, portalSlug, { ...input, title, description }, requestHash, correlationId);
+    } catch (err) {
+      if ((err as { code?: string }).code === "P2002" && attempt < MAX_ATTEMPTS) continue;
+      throw err;
+    }
+  }
+  throw new Error("unreachable");
+}
+
+async function submitOnce(
+  user: SessionUser,
+  portalSlug: string,
+  input: SubmitRequestInput,
+  requestHash: string,
+  correlationId: string,
+): Promise<string> {
+  const title = input.title;
+  const description = input.description;
   return withRlsContext(getPrisma(), { userId: user.id }, async (tx) => {
     const access = await resolveAccessByUserId(tx, user.id, portalSlug);
     if (!access) throw new ValidationError("You do not have access to this portal.");

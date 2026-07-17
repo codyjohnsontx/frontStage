@@ -39,6 +39,24 @@ export async function processCreateLinearIssue(
     return;
   }
 
+  // Configuration errors do not self-heal — park visibly instead of
+  // burning retries. Fixture mode needs no destination team.
+  if (connection.mode !== "fixture" && !connection.defaultTeamId) {
+    await prisma.clientRequest.update({
+      where: { id: request.id },
+      data: {
+        linearSyncState: "FAILED",
+        linearSyncError:
+          "Linear connection has no destination team configured (defaultTeamId) for issue creation",
+      },
+    });
+    log.error("request_sync_no_default_team", {
+      requestId: request.id,
+      connectionId: connection.id,
+    });
+    return;
+  }
+
   try {
     const created = await linearAdapter.createWorkItem(authForConnection(connection), {
       ...(connection.defaultTeamId ? { teamId: connection.defaultTeamId } : {}),

@@ -98,8 +98,9 @@ export default async function PortalPage({
         <h2>Client requests</h2>
         {requests.length === 0 ? (
           <p className="muted">
-            No requests yet. Client submissions land here immediately and create a Linear
-            Triage issue — client urgency never reprioritizes engineering work by itself.
+            No requests yet. Client submissions land here immediately and are queued to
+            create a Linear Triage issue asynchronously (the Linear column shows pending or
+            failed syncs) — client urgency never reprioritizes engineering work by itself.
           </p>
         ) : (
           <table>

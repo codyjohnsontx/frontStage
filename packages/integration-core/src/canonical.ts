@@ -72,6 +72,13 @@ export type VerifiedWebhookEvent =
 export interface CanonicalWorkItemCreate {
   /** Destination container (Linear: team id). Provider-specific requirement. */
   teamId?: string;
+  /**
+   * Explicit intake workflow state (Linear: stateId). When omitted, the
+   * provider's default intake applies (Linear routes to the team's triage /
+   * default state) — which is the desired behavior for client requests.
+   * Per-form state configuration can set this later.
+   */
+  stateId?: string;
   title: string;
   description?: string;
 }

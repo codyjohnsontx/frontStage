@@ -205,7 +205,7 @@ export async function fetchIssueById(
  */
 export async function createIssue(
   accessToken: string,
-  input: { teamId: string; title: string; description?: string },
+  input: { teamId: string; title: string; description?: string; stateId?: string },
 ): Promise<{ id: string; identifier?: string; url?: string }> {
   const data = await gql<{
     issueCreate: { success: boolean; issue: { id: string; identifier: string; url: string } | null };
@@ -222,6 +222,7 @@ export async function createIssue(
         teamId: input.teamId,
         title: input.title,
         ...(input.description ? { description: input.description } : {}),
+        ...(input.stateId ? { stateId: input.stateId } : {}),
       },
     },
   );

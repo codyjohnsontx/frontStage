@@ -117,6 +117,7 @@ export function createLinearAdapter(options: { webhookSigningSecret?: string } =
         teamId: input.teamId,
         title: input.title,
         ...(input.description ? { description: input.description } : {}),
+        ...(input.stateId ? { stateId: input.stateId } : {}),
       });
     },
 
