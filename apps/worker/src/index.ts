@@ -7,6 +7,7 @@ import { drainOutbox, runDueJobs, type JobHandler } from "./queue.js";
 import { sweepExpiredInvitations } from "./sweeps.js";
 import { invitationEmailPayload, sendInvitationEmail } from "./email.js";
 import { processWebhookEvent, syncConnection } from "./sources.js";
+import { processCreateLinearIssue } from "./requests.js";
 
 const POLL_INTERVAL_MS = 1000;
 const SWEEP_INTERVAL_MS = 60_000;
@@ -17,6 +18,7 @@ const log = createLogger({ component: "worker", workerId });
 /** Domain event type → job type. */
 const outboxRoutes: Record<string, string> = {
   "invitation.created": "email.invitation",
+  "request.created": "linear.create_issue",
 };
 
 const jobHandlers: Record<string, JobHandler> = {
@@ -36,6 +38,10 @@ const jobHandlers: Record<string, JobHandler> = {
   "webhook.process": async (data, { correlationId }) => {
     const parsed = z.object({ webhookEventId: z.string().uuid() }).parse(data);
     await processWebhookEvent(getPrisma(), log.child({ correlationId }), parsed.webhookEventId);
+  },
+  "linear.create_issue": async (data, { correlationId }) => {
+    const parsed = z.object({ requestId: z.string().uuid() }).parse(data);
+    await processCreateLinearIssue(getPrisma(), log.child({ correlationId }), parsed.requestId);
   },
 };
 

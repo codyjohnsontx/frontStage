@@ -7,7 +7,8 @@ import type {
   VerifiedWebhookEvent,
   WorkSystemAdapter,
 } from "@frontstage/integration-core";
-import { fetchAllIssues, fetchAllProjects, fetchIssueById, fetchProjectById } from "./graphql";
+import { randomUUID } from "node:crypto";
+import { createIssue, fetchAllIssues, fetchAllProjects, fetchIssueById, fetchProjectById } from "./graphql";
 import { FIXTURE_ISSUES, FIXTURE_PROJECTS } from "./fixtures";
 
 export { buildAuthorizeUrl, exchangeCodeForToken, type LinearOAuthConfig } from "./oauth";
@@ -95,6 +96,29 @@ export function createLinearAdapter(options: { webhookSigningSecret?: string } =
         return structuredClone(FIXTURE_ISSUES.find((i) => i.id === id) ?? null);
       }
       return fetchIssueById(auth.accessToken, id);
+    },
+
+    async createWorkItem(auth, input) {
+      if (auth.mode === "fixture") {
+        // Simulated intake: official-shaped reference without a live call.
+        const suffix = randomUUID().slice(0, 8);
+        return {
+          id: `fixture-created-${suffix}`,
+          identifier: `TRI-${suffix.slice(0, 4).toUpperCase()}`,
+          url: `https://linear.app/northline/issue/TRI-${suffix.slice(0, 4).toUpperCase()}`,
+        };
+      }
+      if (!input.teamId) {
+        throw new Error(
+          "Linear issue creation requires a destination team (set defaultTeamId on the connection)",
+        );
+      }
+      return createIssue(auth.accessToken, {
+        teamId: input.teamId,
+        title: input.title,
+        ...(input.description ? { description: input.description } : {}),
+        ...(input.stateId ? { stateId: input.stateId } : {}),
+      });
     },
 
     verifyWebhook(rawBody, headers): VerifiedWebhookEvent {

@@ -69,6 +69,26 @@ export type VerifiedWebhookEvent =
   | { ok: true; payload: unknown; eventType?: string; deliveryId?: string }
   | { ok: false; reason: string };
 
+export interface CanonicalWorkItemCreate {
+  /** Destination container (Linear: team id). Provider-specific requirement. */
+  teamId?: string;
+  /**
+   * Explicit intake workflow state (Linear: stateId). When omitted, the
+   * provider's default intake applies (Linear routes to the team's triage /
+   * default state) — which is the desired behavior for client requests.
+   * Per-form state configuration can set this later.
+   */
+  stateId?: string;
+  title: string;
+  description?: string;
+}
+
+export interface CreatedWorkItemRef {
+  id: string;
+  identifier?: string;
+  url?: string;
+}
+
 export interface WorkSystemAdapter {
   provider: Provider;
   capabilities(): AdapterCapabilities;
@@ -77,6 +97,9 @@ export interface WorkSystemAdapter {
   listWorkItems(auth: ConnectionAuth, projectId?: string): Promise<CanonicalWorkItem[]>;
   getProject(auth: ConnectionAuth, id: string): Promise<CanonicalProject | null>;
   getWorkItem(auth: ConnectionAuth, id: string): Promise<CanonicalWorkItem | null>;
+
+  /** Create a work item in the provider's intake/triage (client requests). */
+  createWorkItem(auth: ConnectionAuth, input: CanonicalWorkItemCreate): Promise<CreatedWorkItemRef>;
 
   /** Verify a webhook delivery from raw body + headers. */
   verifyWebhook(rawBody: string, headers: Record<string, string | null>): VerifiedWebhookEvent;

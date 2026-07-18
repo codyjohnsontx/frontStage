@@ -40,7 +40,7 @@ export async function listMyClientPortals(user: SessionUser): Promise<ClientPort
   });
 }
 
-interface PortalAccess {
+export interface PortalAccess {
   portalId: string;
   organizationId: string;
   clientOrganizationId: string;
@@ -49,7 +49,7 @@ interface PortalAccess {
 }
 
 /** Resolve the user's active membership for a portal slug, or null. */
-async function resolveAccessByUserId(
+export async function resolveAccessByUserId(
   tx: TransactionClient,
   userId: string,
   portalSlug: string,
