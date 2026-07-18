@@ -119,7 +119,9 @@ export default async function PortalPage({
                 <tr key={r.id}>
                   <td className="muted">{r.identifier}</td>
                   <td>
-                    {r.title}
+                    <Link href={`/o/${org.slug}/portals/${portal.slug}/requests/${r.identifier}`}>
+                      {r.title}
+                    </Link>
                     <div className="muted" style={{ fontSize: "0.78rem" }}>
                       {REQUEST_TYPE_LABELS[r.type] ?? r.type} ·{" "}
                       {REQUEST_STATUS_LABELS[r.status] ?? r.status}

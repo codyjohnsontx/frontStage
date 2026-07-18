@@ -101,6 +101,12 @@ export interface WorkSystemAdapter {
   /** Create a work item in the provider's intake/triage (client requests). */
   createWorkItem(auth: ConnectionAuth, input: CanonicalWorkItemCreate): Promise<CreatedWorkItemRef>;
 
+  /** Add a comment to an existing work item (client-visible thread forwarding). */
+  addComment(
+    auth: ConnectionAuth,
+    input: { workItemId: string; body: string },
+  ): Promise<{ id: string }>;
+
   /** Verify a webhook delivery from raw body + headers. */
   verifyWebhook(rawBody: string, headers: Record<string, string | null>): VerifiedWebhookEvent;
 }

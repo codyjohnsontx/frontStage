@@ -2,6 +2,81 @@ import type { PrismaClient } from "@frontstage/database";
 import type { Logger } from "@frontstage/observability";
 import { authForConnection, linearAdapter } from "./sources.js";
 
+const KIND_PREFIX: Record<string, string> = {
+  PUBLIC_REPLY: "Reply to client",
+  CLARIFICATION_REQUEST: "Clarification requested from client",
+  CLIENT_MESSAGE: "Client message",
+};
+
+/**
+ * Forward a client-visible request message to the linked Linear issue as a
+ * comment (§28 default routing for client requests). Internal notes never
+ * reach this handler — they get no outbox event. Retries cover the race
+ * where the message lands before the issue-creation job has run.
+ */
+export async function processAddLinearComment(
+  prisma: PrismaClient,
+  log: Logger,
+  messageId: string,
+): Promise<void> {
+  const message = await prisma.requestMessage.findUnique({
+    where: { id: messageId },
+    include: {
+      request: true,
+      author: { select: { name: true, email: true } },
+    },
+  });
+  if (!message) throw new Error(`Request message ${messageId} not found`);
+  if (message.kind === "INTERNAL_NOTE") return; // defense in depth
+  if (message.linearCommentId) return; // idempotent
+
+  const request = message.request;
+  if (!request.linearIssueId) {
+    if (request.linearSyncState === "FAILED") {
+      // The issue will never exist; park the comment visibly.
+      await prisma.requestMessage.update({
+        where: { id: message.id },
+        data: { linearSyncState: "FAILED" },
+      });
+      log.error("request_comment_no_issue", { messageId, requestId: request.id });
+      return;
+    }
+    // Issue creation may simply not have run yet — retry with backoff.
+    throw new Error(`Request ${request.identifier} has no Linear issue yet; retrying comment`);
+  }
+
+  const connection = await prisma.integrationConnection.findFirst({
+    where: { organizationId: request.organizationId, provider: "LINEAR", status: { not: "DISCONNECTED" } },
+  });
+  if (!connection) {
+    await prisma.requestMessage.update({
+      where: { id: message.id },
+      data: { linearSyncState: "FAILED" },
+    });
+    log.error("request_comment_no_connection", { messageId, requestId: request.id });
+    return;
+  }
+
+  const prefix = KIND_PREFIX[message.kind] ?? "Message";
+  const created = await linearAdapter.addComment(authForConnection(connection), {
+    workItemId: request.linearIssueId,
+    body: [
+      `**${prefix}** — ${message.author.name ?? message.author.email} via Frontstage (${request.identifier})`,
+      "",
+      message.body,
+    ].join("\n"),
+  });
+  await prisma.requestMessage.update({
+    where: { id: message.id },
+    data: { linearSyncState: "SYNCED", linearCommentId: created.id },
+  });
+  log.info("request_comment_forwarded", {
+    messageId,
+    requestId: request.id,
+    linearCommentId: created.id,
+  });
+}
+
 /**
  * Create the Linear Triage issue for a submitted client request (§27).
  * The Frontstage request is already committed — this side effect retries

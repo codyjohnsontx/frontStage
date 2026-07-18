@@ -49,10 +49,11 @@ never silently overwrite client content.
 Live-workspace validation still pends Linear OAuth app registration (see
 parking lot).
 
-## Phase 2 — Client collaboration 🔜
+## Phase 2 — Client collaboration ✅ (fixture mode)
 
-Exit: a client submits a request → it creates a real Linear Triage issue →
-internal and public communication remain correctly separated.
+Exit criteria met (see progress.md): a client submits a request → it
+creates a (fixture) Linear Triage issue → internal and public communication
+remain correctly separated, with three tested leak boundaries.
 
 - ✅ **2.1 Clients get in the door** — portal memberships + client-role
   invitations (CLIENT_ADMIN/APPROVER/CONTRIBUTOR/VIEWER, reusing Phase 0
@@ -66,14 +67,15 @@ internal and public communication remain correctly separated.
   (adapter gains `createWorkItem`; fixture mode simulates), client priority
   vs internal delivery priority stored separately, request list + detail
   for both sides.
-- 🔜 **2.3 Two-track communication** — public replies vs internal notes
+- ✅ **2.3 Two-track communication** — public replies vs internal notes
   (structurally unreachable by client roles; adversarial leak tests like
   the projection boundary), request-for-clarification, formal accept /
   decline with reason, duplicate linking (link to existing Linear issue,
-  merge, close-as-duplicate with history), notification events on the
-  outbox → email pipeline with digest-vs-immediate defaults.
+  close-as-duplicate with history), immediate notification emails via the
+  outbox pipeline (digest preferences deferred to the notification system,
+  Phase 4+).
 
-## Phase 3 — Deliverables and approvals ⬜
+## Phase 3 — Deliverables and approvals 🔜
 
 Exit: a client approves an exact version · the approval survives a simulated
 Linear outage · a material change invalidates only the new version.

@@ -5,9 +5,14 @@ import { createLogger } from "@frontstage/observability";
 import { z } from "zod";
 import { drainOutbox, runDueJobs, type JobHandler } from "./queue.js";
 import { sweepExpiredInvitations } from "./sweeps.js";
-import { invitationEmailPayload, sendInvitationEmail } from "./email.js";
+import {
+  invitationEmailPayload,
+  notificationEmailPayload,
+  sendInvitationEmail,
+  sendNotificationEmail,
+} from "./email.js";
 import { processWebhookEvent, syncConnection } from "./sources.js";
-import { processCreateLinearIssue } from "./requests.js";
+import { processAddLinearComment, processCreateLinearIssue } from "./requests.js";
 
 const POLL_INTERVAL_MS = 1000;
 const SWEEP_INTERVAL_MS = 60_000;
@@ -19,6 +24,8 @@ const log = createLogger({ component: "worker", workerId });
 const outboxRoutes: Record<string, string> = {
   "invitation.created": "email.invitation",
   "request.created": "linear.create_issue",
+  "request.message.created": "linear.add_comment",
+  "notify.request_update": "email.request_update",
 };
 
 const jobHandlers: Record<string, JobHandler> = {
@@ -42,6 +49,15 @@ const jobHandlers: Record<string, JobHandler> = {
   "linear.create_issue": async (data, { correlationId }) => {
     const parsed = z.object({ requestId: z.string().uuid() }).parse(data);
     await processCreateLinearIssue(getPrisma(), log.child({ correlationId }), parsed.requestId);
+  },
+  "linear.add_comment": async (data, { correlationId }) => {
+    const parsed = z.object({ messageId: z.string().uuid() }).parse(data);
+    await processAddLinearComment(getPrisma(), log.child({ correlationId }), parsed.messageId);
+  },
+  "email.request_update": async (data, { correlationId }) => {
+    const parsed = notificationEmailPayload.parse(data);
+    await sendNotificationEmail(parsed);
+    log.info("request_update_email_sent", { to: parsed.to, correlationId });
   },
 };
 

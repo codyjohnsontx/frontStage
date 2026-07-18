@@ -19,6 +19,24 @@ export const invitationEmailPayload = z.object({
 
 export type InvitationEmailPayload = z.infer<typeof invitationEmailPayload>;
 
+export const notificationEmailPayload = z.object({
+  to: z.string().email(),
+  subject: z.string().min(1).max(200),
+  body: z.string().min(1).max(10_000),
+});
+
+export type NotificationEmailPayload = z.infer<typeof notificationEmailPayload>;
+
+/** Generic immediate notification (request updates, decisions, mentions). */
+export async function sendNotificationEmail(payload: NotificationEmailPayload): Promise<void> {
+  await transport.sendMail({
+    from: process.env.EMAIL_FROM ?? "Frontstage <no-reply@frontstage.local>",
+    to: payload.to,
+    subject: payload.subject,
+    text: payload.body,
+  });
+}
+
 export async function sendInvitationEmail(payload: InvitationEmailPayload): Promise<void> {
   const role = payload.roleKey.toLowerCase().replace(/_/g, " ");
   const expires = new Date(payload.expiresAt).toUTCString();

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { requestClientView, type InternalRequestData } from "../src/server/request-view";
+import {
+  messagesClientView,
+  requestClientView,
+  type InternalMessageData,
+  type InternalRequestData,
+} from "../src/server/request-view";
 
 const base: InternalRequestData = {
   identifier: "APEX-REQ-001",
@@ -39,5 +44,60 @@ describe("requestClientView — the leak boundary for requests", () => {
     expect(requestClientView({ ...base, status: "SOMETHING_NEW" }).statusLabel).toBe(
       "SOMETHING_NEW",
     );
+  });
+
+  it("exposes the decision reason ONLY once formally decided", () => {
+    const withReason = { ...base, decisionReason: "Out of scope for this phase." };
+    expect(requestClientView(withReason).decisionReason).toBeNull(); // still RECEIVED
+    expect(requestClientView({ ...withReason, status: "DECLINED" }).decisionReason).toBe(
+      "Out of scope for this phase.",
+    );
+    expect(requestClientView({ ...withReason, status: "ACCEPTED" }).decisionReason).toBe(
+      "Out of scope for this phase.",
+    );
+  });
+});
+
+describe("messagesClientView — the thread leak boundary", () => {
+  const thread: InternalMessageData[] = [
+    {
+      id: "m1",
+      kind: "PUBLIC_REPLY",
+      body: "We are looking into the timeout.",
+      authorName: "Priya N.",
+      createdAt: new Date(),
+      linearSyncState: "FAILED",
+      linearCommentId: "lin-comment-secret-1",
+    },
+    {
+      id: "m2",
+      kind: "INTERNAL_NOTE",
+      body: "SECRET: client is on the legacy psync path, do not mention until legal signs off",
+      authorName: "Marcus T.",
+      createdAt: new Date(),
+    },
+    {
+      id: "m3",
+      kind: "CLIENT_MESSAGE",
+      body: "Any update?",
+      authorName: "Dana Osei",
+      createdAt: new Date(),
+    },
+  ];
+
+  it("drops INTERNAL_NOTE rows entirely — body, author, existence", () => {
+    const view = messagesClientView(thread);
+    expect(view.map((m) => m.id)).toEqual(["m1", "m3"]);
+    const serialized = JSON.stringify(view);
+    expect(serialized).not.toContain("SECRET");
+    expect(serialized).not.toContain("psync");
+    expect(serialized).not.toContain("Marcus");
+  });
+
+  it("strips Linear sync fields from client-visible messages", () => {
+    const serialized = JSON.stringify(messagesClientView(thread));
+    expect(serialized).not.toContain("lin-comment-secret-1");
+    expect(serialized).not.toContain("FAILED");
+    expect(serialized).not.toContain("linearSyncState");
   });
 });

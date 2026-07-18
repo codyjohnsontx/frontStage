@@ -2,6 +2,53 @@
 
 Honest record of what is actually built and verified. Newest first.
 
+## 2026-07-18 — Slice 2.3: two-track communication (Phase 2 complete)
+
+**Built:**
+
+- `request_messages` (forced RLS): one thread per request with four kinds —
+  PUBLIC_REPLY, INTERNAL_NOTE, CLARIFICATION_REQUEST, CLIENT_MESSAGE.
+  Internal notes are structurally unreachable by client roles: they never
+  get outbox events (no Linear forward, no email) and `messagesClientView()`
+  — the third leak boundary — drops them entirely (body, author, existence)
+  and strips Linear sync fields from everything else, with adversarial
+  tests.
+- §28 default routing: client-visible messages forward to the linked Linear
+  issue as comments through the outbox (`adapter.addComment`: real
+  commentCreate + fixture). Retries cover the message-before-issue race;
+  a permanently failed issue parks the comment FAILED.
+- Formal decisions (§27): accept (optional note) / decline (reason
+  required, client-visible), recorded on the request + posted to the thread
+  + emailed. Duplicate handling: close-as-duplicate links to another
+  request on the portal with history preserved and a client-facing merge
+  note; link-to-existing-Linear-issue redirects future thread forwards.
+- Clarification requests flag "needs your input" on the client side; first
+  client-visible response moves RECEIVED → IN_REVIEW.
+- Immediate notification emails to the requester (reply / clarification /
+  decision / merge) through the outbox → email pipeline. Digest preferences
+  remain future work with the notification system (Phase 4+), consistent
+  with §32's immediate-by-default list for action-required events.
+- Internal request detail page (thread with visually distinct internal
+  notes, reply/note/clarify forms, decision + duplicate + Linear-link
+  tools); client detail page gains the thread, reply form
+  (comment.create roles), decision banner, and merge note.
+
+**Verified live (scripted HTTP, dev servers on :3100):**
+
+1. Public reply + clarification forwarded to Linear as fixture comments;
+   the internal note was NOT forwarded and produced no email.
+2. First client-visible reply moved APEX-REQ-001 RECEIVED → IN_REVIEW.
+3. Dana's page showed the reply + clarification; leak sweep found no
+   SECRET-NOTE, no psync, no ENG-42, no comment ids.
+4. Dana replied; the CLIENT_MESSAGE forwarded to Linear.
+5. REQ-002 declined with a reason → Dana sees "Declined" + the reason;
+   REQ-003 closed as duplicate of REQ-001 → Dana sees the merge note with a
+   link. Both generated immediate emails (4 total in Mailpit).
+
+**Test suite:** 68 passing (thread leak-boundary + decision-visibility
+tests added). Phase 2 exit criteria all verified: request → real (fixture)
+Linear Triage issue; internal and public communication correctly separated.
+
 ## 2026-07-16 — Slice 2.2: client requests → Linear Triage
 
 **Built:**
