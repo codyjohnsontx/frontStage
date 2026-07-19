@@ -222,6 +222,10 @@ export async function getClientRequest(
       include: {
         duplicateOf: { select: { identifier: true } },
         messages: {
+          // Internal notes are excluded at the QUERY level too — they never
+          // enter the client request path at all. messagesClientView()
+          // remains the enforced boundary (belt and suspenders).
+          where: { kind: { not: "INTERNAL_NOTE" } },
           orderBy: { createdAt: "asc" },
           include: { author: { select: { name: true } } },
         },

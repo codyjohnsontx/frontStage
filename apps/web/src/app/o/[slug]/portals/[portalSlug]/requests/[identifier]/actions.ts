@@ -35,9 +35,17 @@ async function resolve(formData: FormData) {
   if (!org) redirect("/orgs");
   const path = detailPath(slug, portalSlug, identifier);
 
-  const portal = await getPortalBySlug(user, org.id, portalSlug);
-  if (!portal) redirect("/orgs");
-  const thread = await getRequestThreadInternal(user, org.id, portal.id, identifier);
+  // Authorization/validation failures from the lookups surface as the same
+  // safe messages every action uses; redirect()/notFound() control flow is
+  // rethrown untouched by actionErrorMessage.
+  let thread: Awaited<ReturnType<typeof getRequestThreadInternal>>;
+  try {
+    const portal = await getPortalBySlug(user, org.id, portalSlug);
+    if (!portal) redirect("/orgs");
+    thread = await getRequestThreadInternal(user, org.id, portal.id, identifier);
+  } catch (err) {
+    redirect(`${path}?error=${encodeURIComponent(actionErrorMessage(err, "Could not load that request.", PERMISSION_MESSAGE))}`);
+  }
   if (!thread) notFound();
   if (submittedRequestId && submittedRequestId !== thread.request.id) {
     redirect(`${path}?error=${encodeURIComponent("That request no longer matches this page. Reload and try again.")}`);

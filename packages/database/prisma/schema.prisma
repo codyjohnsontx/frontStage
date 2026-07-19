@@ -596,7 +596,7 @@ model ClientRequest {
   // Composite tenant/portal FK: a duplicate target must live in the same
   // organization AND the same portal — cross-portal merges are
   // unrepresentable at the database level.
-  duplicateOf ClientRequest?   @relation("RequestDuplicates", fields: [organizationId, portalId, duplicateOfRequestId], references: [organizationId, portalId, id])
+  duplicateOf ClientRequest?   @relation("RequestDuplicates", fields: [organizationId, portalId, duplicateOfRequestId], references: [organizationId, portalId, id], onDelete: Restrict, onUpdate: Cascade)
   duplicates  ClientRequest[]  @relation("RequestDuplicates")
   messages    RequestMessage[]
 

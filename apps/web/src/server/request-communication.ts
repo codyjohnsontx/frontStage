@@ -20,6 +20,25 @@ const log = createLogger({ component: "web.request-communication" });
 /** Requests still accepting messages and decisions. */
 const OPEN_STATUSES: readonly string[] = ["RECEIVED", "IN_REVIEW"];
 
+/**
+ * Lock the request row for the rest of the transaction so a concurrent
+ * decideRequest / closeAsDuplicate cannot commit a terminal status between
+ * the OPEN_STATUSES check and the message insert. Returns the locked
+ * status, or null when the row does not exist in this tenant context.
+ */
+async function lockRequestStatus(
+  tx: TransactionClient,
+  organizationId: string,
+  requestId: string,
+): Promise<string | null> {
+  const rows = await tx.$queryRaw<{ status: string }[]>`
+    SELECT status FROM client_requests
+    WHERE id = ${requestId}::uuid AND organization_id = ${organizationId}::uuid
+    FOR UPDATE
+  `;
+  return rows[0]?.status ?? null;
+}
+
 function validBody(body: string): string {
   const trimmed = body.trim();
   if (trimmed.length < 1 || trimmed.length > 5000) {
@@ -90,9 +109,13 @@ export async function addInternalMessage(
     const resource = { organizationId, portalId: request.portalId };
     assertPermission(context, kind === "INTERNAL_NOTE" ? "comment.internal.create" : "comment.create", resource);
 
-    if (!OPEN_STATUSES.includes(request.status)) {
+    // Row lock held through the insert below: a concurrent decision cannot
+    // slip a terminal status in between the check and the write.
+    const lockedStatus = await lockRequestStatus(tx, organizationId, request.id);
+    if (lockedStatus === null) throw new ValidationError("Request not found.");
+    if (!OPEN_STATUSES.includes(lockedStatus)) {
       throw new ValidationError(
-        `This request is ${request.status.toLowerCase()}; reopen it before adding messages.`,
+        `This request is ${lockedStatus.toLowerCase()}; reopen it before adding messages.`,
       );
     }
 
@@ -175,10 +198,12 @@ export async function decideRequest(
       include: { createdBy: { select: { email: true } } },
     });
     if (!request) throw new ValidationError("Request not found.");
+    // Permission first (matches addInternalMessage): an unauthorized caller
+    // must not learn the request's status from the error message.
+    assertPermission(context, "request.triage", { organizationId, portalId: request.portalId });
     if (!OPEN_STATUSES.includes(request.status)) {
       throw new ValidationError(`This request was already ${request.status.toLowerCase()}.`);
     }
-    assertPermission(context, "request.triage", { organizationId, portalId: request.portalId });
 
     // Conditional transition: exactly one decision wins; a concurrent
     // decision or duplicate-close aborts this one before any side effects.
@@ -249,10 +274,10 @@ export async function closeAsDuplicate(
       include: { createdBy: { select: { email: true } } },
     });
     if (!request) throw new ValidationError("Request not found.");
+    assertPermission(context, "request.triage", { organizationId, portalId: request.portalId });
     if (!OPEN_STATUSES.includes(request.status)) {
       throw new ValidationError(`This request was already ${request.status.toLowerCase()}.`);
     }
-    assertPermission(context, "request.triage", { organizationId, portalId: request.portalId });
 
     const target = await tx.clientRequest.findFirst({
       where: {
@@ -372,7 +397,9 @@ export async function addClientMessage(
       },
     });
     if (!request) throw new ValidationError("Request not found.");
-    if (!OPEN_STATUSES.includes(request.status)) {
+    const lockedStatus = await lockRequestStatus(tx, access.organizationId, request.id);
+    if (lockedStatus === null) throw new ValidationError("Request not found.");
+    if (!OPEN_STATUSES.includes(lockedStatus)) {
       throw new ValidationError(
         "This request is closed. Submit a new request if you need anything further.",
       );
