@@ -355,6 +355,57 @@ describe("client_requests isolation", () => {
   });
 });
 
+describe("deliverables isolation", () => {
+  it("deliverables and their versions are invisible outside their org", async () => {
+    const id = await withRlsContext(app, { organizationId: ORG_A }, async (tx) => {
+      const d = await tx.deliverable.create({
+        data: {
+          organizationId: ORG_A,
+          portalId: PORTAL_A,
+          identifier: "CA-DEL-001",
+          title: "seed deliverable",
+          internalOwnerId: USER_ALICE,
+          createdById: USER_ALICE,
+        },
+      });
+      await tx.deliverableVersion.create({
+        data: {
+          organizationId: ORG_A,
+          deliverableId: d.id,
+          version: 1,
+          snapshot: { identifier: "CA-DEL-001" },
+          contentHash: "hash",
+          createdById: USER_ALICE,
+        },
+      });
+      return d.id;
+    });
+    await withRlsContext(app, { organizationId: ORG_B }, async (tx) => {
+      expect(await tx.deliverable.count()).toBe(0);
+      expect(await tx.deliverableVersion.count()).toBe(0);
+    });
+    expect(await app.deliverable.count()).toBe(0); // no context
+    expect(id).toBeTruthy();
+  });
+
+  it("cannot pair own org with another org's portal (composite FK)", async () => {
+    await expect(
+      withRlsContext(app, { organizationId: ORG_A }, (tx) =>
+        tx.deliverable.create({
+          data: {
+            organizationId: ORG_A,
+            portalId: PORTAL_B,
+            identifier: "CA-DEL-002",
+            title: "cross-portal",
+            internalOwnerId: USER_ALICE,
+            createdById: USER_ALICE,
+          },
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+});
+
 describe("audit append-only", () => {
   it("rejects UPDATE and DELETE even for the table owner", async () => {
     const event = await owner.auditEvent.findFirstOrThrow({

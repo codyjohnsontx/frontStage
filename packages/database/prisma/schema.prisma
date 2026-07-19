@@ -33,6 +33,8 @@ model User {
   clientRequests      ClientRequest[]
   requestsDecided     ClientRequest[]          @relation("RequestDecider")
   requestMessages     RequestMessage[]
+  deliverablesOwned   Deliverable[]            @relation("DeliverableOwner")
+  deliverablesCreated Deliverable[]            @relation("DeliverableCreator")
   invitationsSent     Invitation[]             @relation("InvitationInviter")
   invitationsAccepted Invitation[]             @relation("InvitationAcceptor")
 
@@ -414,6 +416,7 @@ model SourceObject {
   snapshots  SourceObjectSnapshot[]
   sourceLinks SourceLink[]
   workItems  ExternalWorkItem[]
+  deliverableLinks DeliverableSourceLink[]
 
   @@unique([connectionId, externalId])
   @@index([organizationId, type])
@@ -463,9 +466,10 @@ model ClientOrganization {
   organizationId    String   @map("organization_id") @db.Uuid
   name              String
   slug              String
-  identifierPrefix  String   @map("identifier_prefix")
-  nextProjectNumber Int      @default(1) @map("next_project_number")
-  nextRequestNumber Int      @default(1) @map("next_request_number")
+  identifierPrefix      String   @map("identifier_prefix")
+  nextProjectNumber     Int      @default(1) @map("next_project_number")
+  nextRequestNumber     Int      @default(1) @map("next_request_number")
+  nextDeliverableNumber Int      @default(1) @map("next_deliverable_number")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -491,11 +495,95 @@ model Portal {
   externalProjects   ExternalProject[]
   memberships        PortalMembership[]
   clientRequests     ClientRequest[]
+  deliverables       Deliverable[]
 
   @@unique([organizationId, slug])
-  // Target for the composite tenant-alignment FK from portal_memberships.
+  // Target for the composite tenant-alignment FK from portal_memberships,
+  // deliverables, and other portal-scoped children.
   @@unique([organizationId, id])
   @@map("portals")
+}
+
+// Deliverables are Frontstage-owned client delivery objects (§25). They may
+// link to many source objects but need no Linear equivalent. Editable draft
+// content is frozen into an immutable DeliverableVersion at each
+// Ready-for-Review; the client approves an exact version (Phase 3.3).
+enum DeliverableStatus {
+  DRAFT
+  PLANNED
+  IN_PROGRESS
+  READY_FOR_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  DELIVERED
+  ARCHIVED
+
+  @@map("deliverable_status")
+}
+
+model Deliverable {
+  id                 String            @id @default(uuid()) @db.Uuid
+  organizationId     String            @map("organization_id") @db.Uuid
+  portalId           String            @map("portal_id") @db.Uuid
+  identifier         String
+  title              String
+  // Client-safe fields.
+  description        String            @default("")
+  scope              String            @default("")
+  acceptanceCriteria String            @default("") @map("acceptance_criteria")
+  targetDate         DateTime?         @map("target_date")
+  status             DeliverableStatus @default(DRAFT)
+  currentVersion     Int               @default(0) @map("current_version")
+  internalOwnerId    String            @map("internal_owner_id") @db.Uuid
+  createdById        String            @map("created_by_id") @db.Uuid
+  archivedAt         DateTime?         @map("archived_at")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  portal        Portal                  @relation(fields: [organizationId, portalId], references: [organizationId, id], onDelete: Cascade)
+  internalOwner User                    @relation("DeliverableOwner", fields: [internalOwnerId], references: [id])
+  createdBy     User                    @relation("DeliverableCreator", fields: [createdById], references: [id])
+  versions      DeliverableVersion[]
+  sourceLinks   DeliverableSourceLink[]
+
+  @@unique([organizationId, identifier])
+  @@unique([organizationId, id])
+  @@index([organizationId, portalId, createdAt])
+  @@map("deliverables")
+}
+
+// Immutable frozen content at a Ready-for-Review point (§26). contentHash
+// over the material fields drives material-change detection in Phase 3.4.
+model DeliverableVersion {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  deliverableId  String   @map("deliverable_id") @db.Uuid
+  version        Int
+  snapshot       Json
+  contentHash    String   @map("content_hash")
+  createdById    String   @map("created_by_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  deliverable Deliverable @relation(fields: [organizationId, deliverableId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([deliverableId, version])
+  @@index([organizationId, deliverableId])
+  @@map("deliverable_versions")
+}
+
+model DeliverableSourceLink {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  deliverableId  String  @map("deliverable_id") @db.Uuid
+  sourceObjectId String  @map("source_object_id") @db.Uuid
+  relationship   String?
+
+  deliverable  Deliverable  @relation(fields: [organizationId, deliverableId], references: [organizationId, id], onDelete: Cascade)
+  sourceObject SourceObject @relation(fields: [sourceObjectId], references: [id], onDelete: Cascade)
+
+  @@unique([deliverableId, sourceObjectId])
+  @@index([organizationId, deliverableId])
+  @@map("deliverable_source_links")
 }
 
 // Client users belong to portals, never to the host organization. Their

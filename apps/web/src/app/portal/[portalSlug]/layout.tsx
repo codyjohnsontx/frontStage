@@ -37,6 +37,7 @@ export default async function ClientPortalLayout({
         <span style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
           <nav style={{ display: "flex", gap: "1rem" }}>
             <Link href={`/portal/${portalSlug}`}>Overview</Link>
+            <Link href={`/portal/${portalSlug}/deliverables`}>Deliverables</Link>
             <Link href={`/portal/${portalSlug}/requests`}>Requests</Link>
           </nav>
           <span className="muted">
