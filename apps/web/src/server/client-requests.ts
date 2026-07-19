@@ -14,7 +14,12 @@ import { assertPermission, loadAuthorizationContext } from "@/server/authz";
 import { recordAuditEvent } from "@/server/audit";
 import { enqueueOutboxEvent } from "@/server/outbox";
 import { resolveAccessByUserId } from "@/server/client-portal";
-import { requestClientView, type ClientRequestView } from "@/server/request-view";
+import {
+  messagesClientView,
+  requestClientView,
+  type ClientMessageView,
+  type ClientRequestView,
+} from "@/server/request-view";
 
 const log = createLogger({ component: "web.client-requests" });
 
@@ -190,26 +195,64 @@ export async function listClientRequests(
       orderBy: { createdAt: "desc" },
     });
     return {
-      requests: requests.map(requestClientView),
+      requests: requests.map((r) => requestClientView(r)),
       canSubmit: ROLE_PERMISSIONS[access.roleKey].includes("request.submit"),
     };
   });
 }
 
-/** Client-safe request detail. */
+export interface ClientRequestDetail {
+  request: ClientRequestView;
+  messages: ClientMessageView[];
+  canReply: boolean;
+}
+
+/** Client-safe request detail with the client-visible thread. */
 export async function getClientRequest(
   user: SessionUser,
   portalSlug: string,
   identifier: string,
-): Promise<ClientRequestView | null> {
+): Promise<ClientRequestDetail | null> {
   return withRlsContext(getPrisma(), { userId: user.id }, async (tx) => {
     const access = await resolveAccessByUserId(tx, user.id, portalSlug);
     if (!access) return null;
     await setRlsContext(tx, { organizationId: access.organizationId });
     const request = await tx.clientRequest.findFirst({
       where: { organizationId: access.organizationId, portalId: access.portalId, identifier },
+      include: {
+        duplicateOf: { select: { identifier: true } },
+        messages: {
+          // Internal notes are excluded at the QUERY level too — they never
+          // enter the client request path at all. messagesClientView()
+          // remains the enforced boundary (belt and suspenders).
+          where: { kind: { not: "INTERNAL_NOTE" } },
+          orderBy: { createdAt: "asc" },
+          include: { author: { select: { name: true } } },
+        },
+      },
     });
-    return request ? requestClientView(request) : null;
+    if (!request) return null;
+    return {
+      request: requestClientView(request, request.duplicateOf?.identifier ?? null),
+      messages: messagesClientView(
+        request.messages.map((m) => ({
+          id: m.id,
+          kind: m.kind,
+          body: m.body,
+          // Unnamed client authors must not be labelled as the delivery team.
+          authorName:
+            m.author.name ?? (m.kind === "CLIENT_MESSAGE" ? "Your team" : "Delivery team"),
+          createdAt: m.createdAt,
+          linearSyncState: m.linearSyncState,
+          linearCommentId: m.linearCommentId,
+        })),
+      ),
+      // Closed / decided requests no longer accept replies (matches the
+      // server-side guard in addClientMessage).
+      canReply:
+        ROLE_PERMISSIONS[access.roleKey].includes("comment.create") &&
+        (request.status === "RECEIVED" || request.status === "IN_REVIEW"),
+    };
   });
 }
 

@@ -232,6 +232,29 @@ export async function createIssue(
   return data.issueCreate.issue;
 }
 
+/** Add a comment to an issue (client-visible request thread forwarding). */
+export async function createComment(
+  accessToken: string,
+  input: { issueId: string; body: string },
+): Promise<{ id: string }> {
+  const data = await gql<{
+    commentCreate: { success: boolean; comment: { id: string } | null };
+  }>(
+    accessToken,
+    `mutation CreateComment($input: CommentCreateInput!) {
+      commentCreate(input: $input) {
+        success
+        comment { id }
+      }
+    }`,
+    { input: { issueId: input.issueId, body: input.body } },
+  );
+  if (!data.commentCreate.success || !data.commentCreate.comment) {
+    throw new Error("Linear commentCreate did not succeed");
+  }
+  return data.commentCreate.comment;
+}
+
 export async function fetchViewerWorkspace(
   accessToken: string,
 ): Promise<{ id: string; name: string }> {

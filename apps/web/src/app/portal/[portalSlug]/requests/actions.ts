@@ -4,7 +4,28 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/server/session";
 import { submitClientRequest } from "@/server/client-requests";
+import { addClientMessage } from "@/server/request-communication";
 import { actionErrorMessage } from "@/server/errors";
+
+export async function replyToRequestAction(formData: FormData): Promise<void> {
+  const user = await requireUser();
+  const portalSlug = String(formData.get("portalSlug") ?? "");
+  const identifier = String(formData.get("identifier") ?? "");
+  const body = String(formData.get("body") ?? "");
+  const path = `/portal/${portalSlug}/requests/${identifier}`;
+  try {
+    await addClientMessage(user, portalSlug, identifier, body);
+  } catch (err) {
+    const message = actionErrorMessage(
+      err,
+      "Could not send your reply.",
+      "Your role cannot reply on this portal.",
+    );
+    redirect(`${path}?error=${encodeURIComponent(message)}`);
+  }
+  revalidatePath(path);
+  redirect(path);
+}
 
 export async function submitRequestAction(formData: FormData): Promise<void> {
   const user = await requireUser();

@@ -31,6 +31,8 @@ model User {
   memberships         OrganizationMembership[]
   portalMemberships   PortalMembership[]
   clientRequests      ClientRequest[]
+  requestsDecided     ClientRequest[]          @relation("RequestDecider")
+  requestMessages     RequestMessage[]
   invitationsSent     Invitation[]             @relation("InvitationInviter")
   invitationsAccepted Invitation[]             @relation("InvitationAcceptor")
 
@@ -581,12 +583,60 @@ model ClientRequest {
   createdAt             DateTime       @default(now()) @map("created_at")
   updatedAt             DateTime       @updatedAt @map("updated_at")
 
+  // Decision + duplicate handling (§27).
+  decisionReason       String?   @map("decision_reason")
+  decidedById          String?   @map("decided_by_id") @db.Uuid
+  decidedAt            DateTime? @map("decided_at")
+  duplicateOfRequestId String?   @map("duplicate_of_request_id") @db.Uuid
+
   portal    Portal @relation(fields: [organizationId, portalId], references: [organizationId, id], onDelete: Cascade)
   createdBy User   @relation(fields: [createdById], references: [id])
+  decidedBy User?  @relation("RequestDecider", fields: [decidedById], references: [id])
+
+  // Composite tenant/portal FK: a duplicate target must live in the same
+  // organization AND the same portal — cross-portal merges are
+  // unrepresentable at the database level.
+  duplicateOf ClientRequest?   @relation("RequestDuplicates", fields: [organizationId, portalId, duplicateOfRequestId], references: [organizationId, portalId, id], onDelete: Restrict, onUpdate: Cascade)
+  duplicates  ClientRequest[]  @relation("RequestDuplicates")
+  messages    RequestMessage[]
 
   @@unique([organizationId, identifier])
+  @@unique([organizationId, id])
+  @@unique([organizationId, portalId, id])
   @@index([organizationId, portalId, createdAt])
   @@map("client_requests")
+}
+
+enum RequestMessageKind {
+  PUBLIC_REPLY
+  INTERNAL_NOTE
+  CLARIFICATION_REQUEST
+  CLIENT_MESSAGE
+
+  @@map("request_message_kind")
+}
+
+// Two-track communication (§27/§28): INTERNAL_NOTE is never reachable by
+// client roles (enforced at the message leak boundary); everything else is
+// the shared client-visible thread. Client-visible messages forward to the
+// linked Linear issue as comments via the outbox.
+model RequestMessage {
+  id              String             @id @default(uuid()) @db.Uuid
+  organizationId  String             @map("organization_id") @db.Uuid
+  requestId       String             @map("request_id") @db.Uuid
+  kind            RequestMessageKind
+  body            String
+  authorId        String             @map("author_id") @db.Uuid
+  linearSyncState SyncState          @default(PENDING) @map("linear_sync_state")
+  linearCommentId String?            @map("linear_comment_id")
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  // Composite tenant FK: a message's organization must match its request's.
+  request ClientRequest @relation(fields: [organizationId, requestId], references: [organizationId, id], onDelete: Cascade)
+  author  User          @relation(fields: [authorId], references: [id])
+
+  @@index([organizationId, requestId, createdAt])
+  @@map("request_messages")
 }
 
 enum ProjectionStatus {

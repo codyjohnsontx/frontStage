@@ -8,7 +8,7 @@ import type {
   WorkSystemAdapter,
 } from "@frontstage/integration-core";
 import { randomUUID } from "node:crypto";
-import { createIssue, fetchAllIssues, fetchAllProjects, fetchIssueById, fetchProjectById } from "./graphql";
+import { createComment, createIssue, fetchAllIssues, fetchAllProjects, fetchIssueById, fetchProjectById } from "./graphql";
 import { FIXTURE_ISSUES, FIXTURE_PROJECTS } from "./fixtures";
 
 export { buildAuthorizeUrl, exchangeCodeForToken, type LinearOAuthConfig } from "./oauth";
@@ -118,6 +118,16 @@ export function createLinearAdapter(options: { webhookSigningSecret?: string } =
         title: input.title,
         ...(input.description ? { description: input.description } : {}),
         ...(input.stateId ? { stateId: input.stateId } : {}),
+      });
+    },
+
+    async addComment(auth, input) {
+      if (auth.mode === "fixture") {
+        return { id: `fixture-comment-${randomUUID().slice(0, 8)}` };
+      }
+      return createComment(auth.accessToken, {
+        issueId: input.workItemId,
+        body: input.body,
       });
     },
 
