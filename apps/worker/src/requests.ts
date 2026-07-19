@@ -87,6 +87,7 @@ export async function processCreateLinearIssue(
   prisma: PrismaClient,
   log: Logger,
   requestId: string,
+  isFinalAttempt = false,
 ): Promise<void> {
   const request = await prisma.clientRequest.findUnique({
     where: { id: requestId },
@@ -161,10 +162,23 @@ export async function processCreateLinearIssue(
     const message = err instanceof Error ? err.message : String(err);
     await prisma.clientRequest.update({
       where: { id: request.id },
-      data: { linearSyncError: message.slice(0, 1000) },
+      data: {
+        linearSyncError: message.slice(0, 1000),
+        // On the last retry, park the request FAILED so the internal UI
+        // stops showing "pending" forever...
+        ...(isFinalAttempt ? { linearSyncState: "FAILED" as const } : {}),
+      },
     });
-    // Rethrow so the job retries with backoff; state stays PENDING and the
-    // failure is visible internally.
+    if (isFinalAttempt) {
+      // ...and park any queued thread messages: their comment job can never
+      // succeed without an issue to comment on.
+      await prisma.requestMessage.updateMany({
+        where: { requestId: request.id, linearCommentId: null, kind: { not: "INTERNAL_NOTE" } },
+        data: { linearSyncState: "FAILED" },
+      });
+      log.error("request_sync_exhausted", { requestId: request.id, error: message });
+    }
+    // Rethrow so the job retries with backoff (or records the final failure).
     throw err;
   }
 }

@@ -1,13 +1,15 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/server/session";
 import { getMyOrganizationBySlug } from "@/server/organizations";
+import { getPortalBySlug } from "@/server/clients";
 import {
   addInternalMessage,
   closeAsDuplicate,
   decideRequest,
+  getRequestThreadInternal,
   linkLinearIssue,
 } from "@/server/request-communication";
 import { actionErrorMessage } from "@/server/errors";
@@ -18,15 +20,29 @@ function detailPath(slug: string, portalSlug: string, identifier: string): strin
 
 const PERMISSION_MESSAGE = "You do not have permission for that request action.";
 
+/**
+ * Resolve the target request SERVER-SIDE from the route identity
+ * (org slug + portal slug + identifier). The submitted requestId is never
+ * trusted; it only has to agree with what we resolved.
+ */
 async function resolve(formData: FormData) {
   const user = await requireUser();
   const slug = String(formData.get("slug") ?? "");
   const portalSlug = String(formData.get("portalSlug") ?? "");
   const identifier = String(formData.get("identifier") ?? "");
-  const requestId = String(formData.get("requestId") ?? "");
+  const submittedRequestId = String(formData.get("requestId") ?? "");
   const org = await getMyOrganizationBySlug(user, slug);
   if (!org) redirect("/orgs");
-  return { user, org, slug, portalSlug, identifier, requestId, path: detailPath(slug, portalSlug, identifier) };
+  const path = detailPath(slug, portalSlug, identifier);
+
+  const portal = await getPortalBySlug(user, org.id, portalSlug);
+  if (!portal) redirect("/orgs");
+  const thread = await getRequestThreadInternal(user, org.id, portal.id, identifier);
+  if (!thread) notFound();
+  if (submittedRequestId && submittedRequestId !== thread.request.id) {
+    redirect(`${path}?error=${encodeURIComponent("That request no longer matches this page. Reload and try again.")}`);
+  }
+  return { user, org, slug, portalSlug, identifier, requestId: thread.request.id, path };
 }
 
 export async function addMessageAction(formData: FormData): Promise<void> {

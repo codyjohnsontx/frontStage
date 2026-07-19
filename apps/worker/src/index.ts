@@ -46,9 +46,14 @@ const jobHandlers: Record<string, JobHandler> = {
     const parsed = z.object({ webhookEventId: z.string().uuid() }).parse(data);
     await processWebhookEvent(getPrisma(), log.child({ correlationId }), parsed.webhookEventId);
   },
-  "linear.create_issue": async (data, { correlationId }) => {
+  "linear.create_issue": async (data, { correlationId, isFinalAttempt }) => {
     const parsed = z.object({ requestId: z.string().uuid() }).parse(data);
-    await processCreateLinearIssue(getPrisma(), log.child({ correlationId }), parsed.requestId);
+    await processCreateLinearIssue(
+      getPrisma(),
+      log.child({ correlationId }),
+      parsed.requestId,
+      isFinalAttempt,
+    );
   },
   "linear.add_comment": async (data, { correlationId }) => {
     const parsed = z.object({ messageId: z.string().uuid() }).parse(data);
@@ -57,7 +62,8 @@ const jobHandlers: Record<string, JobHandler> = {
   "email.request_update": async (data, { correlationId }) => {
     const parsed = notificationEmailPayload.parse(data);
     await sendNotificationEmail(parsed);
-    log.info("request_update_email_sent", { to: parsed.to, correlationId });
+    // No recipient address in logs — correlationId is the identifying context.
+    log.info("request_update_email_sent", { correlationId });
   },
 };
 

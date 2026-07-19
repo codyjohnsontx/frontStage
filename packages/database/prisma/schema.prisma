@@ -31,6 +31,7 @@ model User {
   memberships         OrganizationMembership[]
   portalMemberships   PortalMembership[]
   clientRequests      ClientRequest[]
+  requestsDecided     ClientRequest[]          @relation("RequestDecider")
   requestMessages     RequestMessage[]
   invitationsSent     Invitation[]             @relation("InvitationInviter")
   invitationsAccepted Invitation[]             @relation("InvitationAcceptor")
@@ -590,12 +591,18 @@ model ClientRequest {
 
   portal    Portal @relation(fields: [organizationId, portalId], references: [organizationId, id], onDelete: Cascade)
   createdBy User   @relation(fields: [createdById], references: [id])
+  decidedBy User?  @relation("RequestDecider", fields: [decidedById], references: [id])
 
-  duplicateOf ClientRequest?   @relation("RequestDuplicates", fields: [duplicateOfRequestId], references: [id])
+  // Composite tenant/portal FK: a duplicate target must live in the same
+  // organization AND the same portal — cross-portal merges are
+  // unrepresentable at the database level.
+  duplicateOf ClientRequest?   @relation("RequestDuplicates", fields: [organizationId, portalId, duplicateOfRequestId], references: [organizationId, portalId, id])
   duplicates  ClientRequest[]  @relation("RequestDuplicates")
   messages    RequestMessage[]
 
   @@unique([organizationId, identifier])
+  @@unique([organizationId, id])
+  @@unique([organizationId, portalId, id])
   @@index([organizationId, portalId, createdAt])
   @@map("client_requests")
 }
@@ -624,7 +631,8 @@ model RequestMessage {
   linearCommentId String?            @map("linear_comment_id")
   createdAt       DateTime           @default(now()) @map("created_at")
 
-  request ClientRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  // Composite tenant FK: a message's organization must match its request's.
+  request ClientRequest @relation(fields: [organizationId, requestId], references: [organizationId, id], onDelete: Cascade)
   author  User          @relation(fields: [authorId], references: [id])
 
   @@index([organizationId, requestId, createdAt])

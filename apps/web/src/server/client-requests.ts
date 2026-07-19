@@ -235,13 +235,19 @@ export async function getClientRequest(
           id: m.id,
           kind: m.kind,
           body: m.body,
-          authorName: m.author.name ?? "Delivery team",
+          // Unnamed client authors must not be labelled as the delivery team.
+          authorName:
+            m.author.name ?? (m.kind === "CLIENT_MESSAGE" ? "Your team" : "Delivery team"),
           createdAt: m.createdAt,
           linearSyncState: m.linearSyncState,
           linearCommentId: m.linearCommentId,
         })),
       ),
-      canReply: ROLE_PERMISSIONS[access.roleKey].includes("comment.create"),
+      // Closed / decided requests no longer accept replies (matches the
+      // server-side guard in addClientMessage).
+      canReply:
+        ROLE_PERMISSIONS[access.roleKey].includes("comment.create") &&
+        (request.status === "RECEIVED" || request.status === "IN_REVIEW"),
     };
   });
 }

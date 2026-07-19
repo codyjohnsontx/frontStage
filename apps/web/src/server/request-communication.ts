@@ -17,6 +17,9 @@ import { REQUEST_STATUS_LABELS } from "@/lib/request-labels";
 
 const log = createLogger({ component: "web.request-communication" });
 
+/** Requests still accepting messages and decisions. */
+const OPEN_STATUSES: readonly string[] = ["RECEIVED", "IN_REVIEW"];
+
 function validBody(body: string): string {
   const trimmed = body.trim();
   if (trimmed.length < 1 || trimmed.length > 5000) {
@@ -87,6 +90,12 @@ export async function addInternalMessage(
     const resource = { organizationId, portalId: request.portalId };
     assertPermission(context, kind === "INTERNAL_NOTE" ? "comment.internal.create" : "comment.create", resource);
 
+    if (!OPEN_STATUSES.includes(request.status)) {
+      throw new ValidationError(
+        `This request is ${request.status.toLowerCase()}; reopen it before adding messages.`,
+      );
+    }
+
     const message = await tx.requestMessage.create({
       data: {
         organizationId,
@@ -98,9 +107,11 @@ export async function addInternalMessage(
         ...(kind === "INTERNAL_NOTE" ? { linearSyncState: "SYNCED" as const } : {}),
       },
     });
-    if (request.status === "RECEIVED" && kind !== "INTERNAL_NOTE") {
-      await tx.clientRequest.update({
-        where: { id: request.id },
+    if (kind !== "INTERNAL_NOTE") {
+      // Guarded on the persisted state: a concurrent decision must not be
+      // overwritten by this transition.
+      await tx.clientRequest.updateMany({
+        where: { id: request.id, status: "RECEIVED" },
         data: { status: "IN_REVIEW" },
       });
     }
@@ -164,13 +175,15 @@ export async function decideRequest(
       include: { createdBy: { select: { email: true } } },
     });
     if (!request) throw new ValidationError("Request not found.");
-    if (request.status !== "RECEIVED" && request.status !== "IN_REVIEW") {
+    if (!OPEN_STATUSES.includes(request.status)) {
       throw new ValidationError(`This request was already ${request.status.toLowerCase()}.`);
     }
     assertPermission(context, "request.triage", { organizationId, portalId: request.portalId });
 
-    await tx.clientRequest.update({
-      where: { id: request.id },
+    // Conditional transition: exactly one decision wins; a concurrent
+    // decision or duplicate-close aborts this one before any side effects.
+    const decided = await tx.clientRequest.updateMany({
+      where: { id: request.id, status: { in: ["RECEIVED", "IN_REVIEW"] } },
       data: {
         status: decision,
         decisionReason: trimmedReason || null,
@@ -178,6 +191,9 @@ export async function decideRequest(
         decidedAt: new Date(),
       },
     });
+    if (decided.count !== 1) {
+      throw new ValidationError("This request was resolved by someone else just now.");
+    }
     const verb = decision === "ACCEPTED" ? "accepted" : "declined";
     const message = await tx.requestMessage.create({
       data: {
@@ -233,20 +249,31 @@ export async function closeAsDuplicate(
       include: { createdBy: { select: { email: true } } },
     });
     if (!request) throw new ValidationError("Request not found.");
-    if (request.status === "CLOSED") throw new ValidationError("This request is already closed.");
+    if (!OPEN_STATUSES.includes(request.status)) {
+      throw new ValidationError(`This request was already ${request.status.toLowerCase()}.`);
+    }
     assertPermission(context, "request.triage", { organizationId, portalId: request.portalId });
 
     const target = await tx.clientRequest.findFirst({
-      where: { organizationId, portalId: request.portalId, identifier: duplicateOfIdentifier },
+      where: {
+        organizationId,
+        portalId: request.portalId,
+        identifier: duplicateOfIdentifier,
+        // Merging into an already-closed request would strand the thread.
+        status: { not: "CLOSED" },
+      },
     });
     if (!target || target.id === request.id) {
-      throw new ValidationError("Pick another request on this portal as the duplicate target.");
+      throw new ValidationError("Pick another open request on this portal as the duplicate target.");
     }
 
-    await tx.clientRequest.update({
-      where: { id: request.id },
+    const closed = await tx.clientRequest.updateMany({
+      where: { id: request.id, status: { in: ["RECEIVED", "IN_REVIEW"] } },
       data: { status: "CLOSED", duplicateOfRequestId: target.id },
     });
+    if (closed.count !== 1) {
+      throw new ValidationError("This request was resolved by someone else just now.");
+    }
     const message = await tx.requestMessage.create({
       data: {
         organizationId,
@@ -345,6 +372,11 @@ export async function addClientMessage(
       },
     });
     if (!request) throw new ValidationError("Request not found.");
+    if (!OPEN_STATUSES.includes(request.status)) {
+      throw new ValidationError(
+        "This request is closed. Submit a new request if you need anything further.",
+      );
+    }
 
     const message = await tx.requestMessage.create({
       data: {
@@ -384,6 +416,9 @@ export async function getRequestThreadInternal(
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
     if (!context) throw new ValidationError("Not a member of this organization.");
+    // Requester identity and internal notes are portal-sensitive: require a
+    // portal-scoped triage grant, not bare organization membership.
+    assertPermission(context, "request.triage", { organizationId, portalId });
     const request = await tx.clientRequest.findFirst({
       where: { organizationId, portalId, identifier: requestIdentifier },
       include: {

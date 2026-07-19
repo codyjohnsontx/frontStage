@@ -100,7 +100,10 @@ export async function drainOutbox(
   });
 }
 
-export type JobHandler = (data: unknown, context: { correlationId: string | null }) => Promise<void>;
+export type JobHandler = (
+  data: unknown,
+  context: { correlationId: string | null; attempt: number; isFinalAttempt: boolean },
+) => Promise<void>;
 
 /**
  * Claim due jobs (SKIP LOCKED), mark them RUNNING, then execute outside the
@@ -143,7 +146,11 @@ export async function runDueJobs(
       if (!handler) {
         throw new Error(`No handler registered for job type "${job.type}"`);
       }
-      await handler(job.payload?.data, { correlationId });
+      await handler(job.payload?.data, {
+        correlationId,
+        attempt: attempts,
+        isFinalAttempt: attempts >= job.max_attempts,
+      });
       await prisma.job.update({
         where: { id: job.id },
         data: { status: "COMPLETED", lockedAt: null, lockedBy: null },
