@@ -419,6 +419,8 @@ model SourceObject {
   deliverableLinks DeliverableSourceLink[]
 
   @@unique([connectionId, externalId])
+  // Target for tenant-scoped composite FKs from deliverable source links.
+  @@unique([organizationId, id])
   @@index([organizationId, type])
   @@map("source_objects")
 }
@@ -579,7 +581,8 @@ model DeliverableSourceLink {
   relationship   String?
 
   deliverable  Deliverable  @relation(fields: [organizationId, deliverableId], references: [organizationId, id], onDelete: Cascade)
-  sourceObject SourceObject @relation(fields: [sourceObjectId], references: [id], onDelete: Cascade)
+  // Tenant-scoped: a link cannot reference another org's source object.
+  sourceObject SourceObject @relation(fields: [organizationId, sourceObjectId], references: [organizationId, id], onDelete: Cascade)
 
   @@unique([deliverableId, sourceObjectId])
   @@index([organizationId, deliverableId])

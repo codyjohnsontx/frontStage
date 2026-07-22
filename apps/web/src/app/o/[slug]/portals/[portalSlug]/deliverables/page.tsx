@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/server/session";
 import { getMyOrganizationBySlug } from "@/server/organizations";
 import { getPortalBySlug } from "@/server/clients";
-import { listPortalDeliverables } from "@/server/deliverables";
+import { getMyDeliverablePermissions, listPortalDeliverables } from "@/server/deliverables";
 import { DELIVERABLE_STATUS_LABELS } from "@/server/deliverable-view";
 import { createDeliverableAction } from "./actions";
 
@@ -22,6 +22,7 @@ export default async function DeliverablesPage({
   const portal = await getPortalBySlug(user, org.id, portalSlug);
   if (!portal) notFound();
   const deliverables = await listPortalDeliverables(user, org.id, portal.id);
+  const permissions = await getMyDeliverablePermissions(user, org.id, portal.id);
 
   return (
     <>
@@ -77,6 +78,7 @@ export default async function DeliverablesPage({
         </div>
       )}
 
+      {permissions.canCreate && (
       <div className="card">
         <h2>New deliverable</h2>
         <form action={createDeliverableAction}>
@@ -89,15 +91,15 @@ export default async function DeliverablesPage({
             </label>
             <label>
               <span className="muted">Client-safe description</span>
-              <textarea name="description" rows={2} style={{ width: "100%", fontFamily: "inherit", fontSize: "0.9rem", padding: "0.55rem 0.75rem", border: "1px solid var(--border)", borderRadius: 8 }} />
+              <textarea name="description" rows={2} className="textarea" />
             </label>
             <label>
               <span className="muted">Scope</span>
-              <textarea name="scope" rows={2} style={{ width: "100%", fontFamily: "inherit", fontSize: "0.9rem", padding: "0.55rem 0.75rem", border: "1px solid var(--border)", borderRadius: 8 }} />
+              <textarea name="scope" rows={2} className="textarea" />
             </label>
             <label>
               <span className="muted">Acceptance criteria (what the client is agreeing to)</span>
-              <textarea name="acceptanceCriteria" rows={3} style={{ width: "100%", fontFamily: "inherit", fontSize: "0.9rem", padding: "0.55rem 0.75rem", border: "1px solid var(--border)", borderRadius: 8 }} />
+              <textarea name="acceptanceCriteria" rows={3} className="textarea" />
             </label>
             <label>
               <span className="muted">Target date</span>{" "}
@@ -109,6 +111,7 @@ export default async function DeliverablesPage({
           </div>
         </form>
       </div>
+      )}
     </>
   );
 }

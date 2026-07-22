@@ -24,6 +24,15 @@ function detailPath(slug: string, portalSlug: string, identifier: string): strin
   return `${listPath(slug, portalSlug)}/${identifier}`;
 }
 
+/** Run a domain op; on failure redirect to `path` with the safe message. */
+async function attempt<T>(path: string, fallback: string, op: () => Promise<T>): Promise<T> {
+  try {
+    return await op();
+  } catch (err) {
+    redirect(`${path}?error=${encodeURIComponent(actionErrorMessage(err, fallback, PERMISSION_MESSAGE))}`);
+  }
+}
+
 function contentFrom(formData: FormData) {
   return {
     title: String(formData.get("title") ?? ""),
@@ -50,12 +59,9 @@ async function resolveDeliverable(formData: FormData) {
   const base = await resolvePortal(formData);
   const identifier = String(formData.get("identifier") ?? "");
   const path = detailPath(base.slug, base.portalSlug, identifier);
-  let found: Awaited<ReturnType<typeof getDeliverableInternal>>;
-  try {
-    found = await getDeliverableInternal(base.user, base.org.id, base.portal.id, identifier);
-  } catch (err) {
-    redirect(`${path}?error=${encodeURIComponent(actionErrorMessage(err, "Could not load that deliverable.", PERMISSION_MESSAGE))}`);
-  }
+  const found = await attempt(path, "Could not load that deliverable.", () =>
+    getDeliverableInternal(base.user, base.org.id, base.portal.id, identifier),
+  );
   if (!found) notFound();
   return { ...base, identifier, path, deliverableId: found.deliverable.id };
 }
@@ -63,23 +69,18 @@ async function resolveDeliverable(formData: FormData) {
 export async function createDeliverableAction(formData: FormData): Promise<void> {
   const { user, org, slug, portalSlug, portal } = await resolvePortal(formData);
   const path = listPath(slug, portalSlug);
-  let identifier: string;
-  try {
-    identifier = await createDeliverable(user, org.id, portal.id, contentFrom(formData));
-  } catch (err) {
-    redirect(`${path}?error=${encodeURIComponent(actionErrorMessage(err, "Could not create the deliverable.", PERMISSION_MESSAGE))}`);
-  }
+  const identifier = await attempt(path, "Could not create the deliverable.", () =>
+    createDeliverable(user, org.id, portal.id, contentFrom(formData)),
+  );
   revalidatePath(path);
   redirect(detailPath(slug, portalSlug, identifier));
 }
 
 export async function updateDeliverableAction(formData: FormData): Promise<void> {
   const { user, org, path, deliverableId } = await resolveDeliverable(formData);
-  try {
-    await updateDeliverableDraft(user, org.id, deliverableId, contentFrom(formData));
-  } catch (err) {
-    redirect(`${path}?error=${encodeURIComponent(actionErrorMessage(err, "Could not save the deliverable.", PERMISSION_MESSAGE))}`);
-  }
+  await attempt(path, "Could not save the deliverable.", () =>
+    updateDeliverableDraft(user, org.id, deliverableId, contentFrom(formData)),
+  );
   revalidatePath(path);
   redirect(`${path}?saved=1`);
 }
@@ -87,11 +88,9 @@ export async function updateDeliverableAction(formData: FormData): Promise<void>
 export async function transitionDeliverableAction(formData: FormData): Promise<void> {
   const { user, org, path, deliverableId } = await resolveDeliverable(formData);
   const target = String(formData.get("target") ?? "") as DeliverableStatus;
-  try {
-    await transitionDeliverable(user, org.id, deliverableId, target);
-  } catch (err) {
-    redirect(`${path}?error=${encodeURIComponent(actionErrorMessage(err, "Could not update the status.", PERMISSION_MESSAGE))}`);
-  }
+  await attempt(path, "Could not update the status.", () =>
+    transitionDeliverable(user, org.id, deliverableId, target),
+  );
   revalidatePath(path);
   redirect(path);
 }
@@ -100,11 +99,9 @@ export async function toggleSourceLinkAction(formData: FormData): Promise<void> 
   const { user, org, path, deliverableId } = await resolveDeliverable(formData);
   const sourceObjectId = String(formData.get("sourceObjectId") ?? "");
   const relationship = String(formData.get("relationship") ?? "");
-  try {
-    await setDeliverableSourceLink(user, org.id, deliverableId, sourceObjectId, relationship);
-  } catch (err) {
-    redirect(`${path}?error=${encodeURIComponent(actionErrorMessage(err, "Could not update source links.", PERMISSION_MESSAGE))}`);
-  }
+  await attempt(path, "Could not update source links.", () =>
+    setDeliverableSourceLink(user, org.id, deliverableId, sourceObjectId, relationship),
+  );
   revalidatePath(path);
   redirect(path);
 }

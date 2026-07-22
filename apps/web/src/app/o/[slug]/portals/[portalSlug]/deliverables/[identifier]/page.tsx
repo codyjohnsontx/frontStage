@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/server/session";
 import { getMyOrganizationBySlug } from "@/server/organizations";
 import { getPortalBySlug } from "@/server/clients";
-import { allowedTransitions, getDeliverableInternal, isEditableStatus } from "@/server/deliverables";
+import {
+  allowedTransitions,
+  getDeliverableInternal,
+  getMyDeliverablePermissions,
+  isEditableStatus,
+} from "@/server/deliverables";
 import { DELIVERABLE_STATUS_LABELS } from "@/server/deliverable-view";
 import {
   toggleSourceLinkAction,
@@ -28,6 +33,14 @@ export default async function DeliverableDetailPage({
   const found = await getDeliverableInternal(user, org.id, portal.id, identifier);
   if (!found) notFound();
   const { deliverable: d, availableSources } = found;
+  const permissions = await getMyDeliverablePermissions(user, org.id, portal.id);
+
+  // Mirror transitionDeliverable's rule: publishing to the client requires
+  // deliverable.publish; every other move requires deliverable.edit. The
+  // server re-asserts on submit — this only hides unusable buttons.
+  const visibleTransitions = allowedTransitions(d.status).filter((target) =>
+    target === "READY_FOR_REVIEW" ? permissions.canPublish : permissions.canEdit,
+  );
 
   const editable = isEditableStatus(d.status);
   const linkedIds = new Set(d.sourceLinks.map((l) => l.sourceObjectId));
@@ -69,15 +82,15 @@ export default async function DeliverableDetailPage({
               </label>
               <label>
                 <span className="muted">Client-safe description</span>
-                <textarea name="description" defaultValue={d.description} rows={2} style={{ width: "100%", fontFamily: "inherit", fontSize: "0.9rem", padding: "0.55rem 0.75rem", border: "1px solid var(--border)", borderRadius: 8 }} />
+                <textarea name="description" defaultValue={d.description} rows={2} className="textarea" />
               </label>
               <label>
                 <span className="muted">Scope</span>
-                <textarea name="scope" defaultValue={d.scope} rows={2} style={{ width: "100%", fontFamily: "inherit", fontSize: "0.9rem", padding: "0.55rem 0.75rem", border: "1px solid var(--border)", borderRadius: 8 }} />
+                <textarea name="scope" defaultValue={d.scope} rows={2} className="textarea" />
               </label>
               <label>
                 <span className="muted">Acceptance criteria</span>
-                <textarea name="acceptanceCriteria" defaultValue={d.acceptanceCriteria} rows={3} style={{ width: "100%", fontFamily: "inherit", fontSize: "0.9rem", padding: "0.55rem 0.75rem", border: "1px solid var(--border)", borderRadius: 8 }} />
+                <textarea name="acceptanceCriteria" defaultValue={d.acceptanceCriteria} rows={3} className="textarea" />
               </label>
               <label>
                 <span className="muted">Target date</span>{" "}
@@ -101,7 +114,10 @@ export default async function DeliverableDetailPage({
           contractual delivery.
         </p>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-          {allowedTransitions(d.status).map((target) => (
+          {visibleTransitions.length === 0 && (
+            <span className="muted">No transitions available to your role from this state.</span>
+          )}
+          {visibleTransitions.map((target) => (
             <form key={target} action={transitionDeliverableAction}>
               {hidden}
               <input type="hidden" name="target" value={target} />
@@ -126,13 +142,20 @@ export default async function DeliverableDetailPage({
         </p>
         {d.sourceLinks.length > 0 && (
           <ul className="muted" style={{ marginTop: 0 }}>
-            {d.sourceLinks.map((l) => (
-              <li key={l.id}>
-                {(l.sourceObject.data as { identifier?: string }).identifier ?? l.sourceObject.externalId}{" "}
-                — {l.sourceObject.title}
-                {l.relationship && ` (${l.relationship})`}
-              </li>
-            ))}
+            {d.sourceLinks.map((l) => {
+              // data is Json and may be JSON null — never assume an object.
+              const data = l.sourceObject.data;
+              const sourceRef =
+                (typeof data === "object" && data !== null && !Array.isArray(data)
+                  ? (data as { identifier?: string }).identifier
+                  : undefined) ?? l.sourceObject.externalId;
+              return (
+                <li key={l.id}>
+                  {sourceRef} — {l.sourceObject.title}
+                  {l.relationship && ` (${l.relationship})`}
+                </li>
+              );
+            })}
           </ul>
         )}
         <form action={toggleSourceLinkAction} className="form-row">

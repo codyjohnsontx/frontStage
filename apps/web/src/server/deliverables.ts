@@ -4,6 +4,7 @@ import {
   withRlsContext,
   type DeliverableStatus,
 } from "@frontstage/database";
+import { hasPermission } from "@frontstage/authorization";
 import { createLogger, newCorrelationId } from "@frontstage/observability";
 import type { SessionUser } from "@/server/session";
 import { ValidationError } from "@/server/errors";
@@ -307,6 +308,31 @@ export async function setDeliverableSourceLink(
       correlationId,
       metadata: { identifier: deliverable.identifier, source: source.externalId },
     });
+  });
+}
+
+export interface DeliverablePermissions {
+  canCreate: boolean;
+  canEdit: boolean;
+  canPublish: boolean;
+}
+
+/** The acting user's deliverable capabilities on a portal (for UI gating —
+ * every action re-asserts server-side). */
+export async function getMyDeliverablePermissions(
+  user: SessionUser,
+  organizationId: string,
+  portalId: string,
+): Promise<DeliverablePermissions> {
+  return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
+    const context = await loadAuthorizationContext(tx, organizationId, user.id);
+    if (!context) return { canCreate: false, canEdit: false, canPublish: false };
+    const resource = { organizationId, portalId };
+    return {
+      canCreate: hasPermission(context, "deliverable.create", resource),
+      canEdit: hasPermission(context, "deliverable.edit", resource),
+      canPublish: hasPermission(context, "deliverable.publish", resource),
+    };
   });
 }
 
