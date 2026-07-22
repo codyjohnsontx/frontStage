@@ -9,12 +9,29 @@ const PNG = Buffer.from(
 const PDF = Buffer.concat([Buffer.from("%PDF-1.7\n"), Buffer.alloc(64, 0x20)]);
 // ELF header — a Linux executable renamed to look harmless.
 const ELF = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0, ...new Array(120).fill(0)]);
+// Real ZIP archive (one stored entry) produced by `zip -X`.
+const ZIP = Buffer.from(
+  "UEsDBAoAAAAAACh19lyGphA2BQAAAAUAAAAFAAAAei50eHRoZWxsb1BLAQIeAwoAAAAAACh19lyGphA2BQAAAAUAAAAFAAAAAAAAAAEAAACkgQAAAAB6LnR4dFBLBQYAAAAAAQABADMAAAAoAAAAAAA=",
+  "base64",
+);
 const TEXT = Buffer.from("provider,status\n1234,verified\n", "utf8");
 
 describe("resolveAttachmentType — trust bytes, not the declared type", () => {
   it("accepts allowed binary types by magic bytes", async () => {
     expect(await resolveAttachmentType(PNG, "image/png")).toBe("image/png");
     expect(await resolveAttachmentType(PDF, "application/pdf")).toBe("application/pdf");
+    expect(await resolveAttachmentType(ZIP, "application/zip")).toBe("application/zip");
+  });
+
+  it("rejects a zip declared as another allowed binary type", async () => {
+    await expect(resolveAttachmentType(ZIP, "application/pdf")).rejects.toThrow(/do not match/);
+    await expect(resolveAttachmentType(ZIP, "image/png")).rejects.toThrow(/do not match/);
+  });
+
+  it("accepts a zip when the declared type is absent or non-binary", async () => {
+    // Browsers sometimes send "" or a generic type; the bytes decide.
+    expect(await resolveAttachmentType(ZIP, "")).toBe("application/zip");
+    expect(await resolveAttachmentType(ZIP, "application/octet-stream")).toBe("application/zip");
   });
 
   it("rejects a disallowed binary even when the declared type is allowed", async () => {
