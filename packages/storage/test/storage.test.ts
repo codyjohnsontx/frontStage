@@ -20,6 +20,25 @@ describe("attachmentKey", () => {
       attachmentKey({ organizationId: ORG, portalId: PORTAL, attachmentId: "x/../../y" }),
     ).toThrow(/not a UUID/);
   });
+
+  it("enforces canonical UUID layout, not just length and charset", () => {
+    // 36 characters of hyphens passed the old length/charset check.
+    expect(() =>
+      attachmentKey({ organizationId: "-".repeat(36), portalId: PORTAL, attachmentId: ATT }),
+    ).toThrow(/not a UUID/);
+    // Right characters, wrong hyphen positions.
+    expect(() =>
+      attachmentKey({
+        organizationId: "aaaaaaaaa-aaa-4aaa-8aaa-aaaaaaaaaaa",
+        portalId: PORTAL,
+        attachmentId: ATT,
+      }),
+    ).toThrow(/not a UUID/);
+    // Canonical UUIDs still accepted, upper case included.
+    expect(() =>
+      attachmentKey({ organizationId: ORG.toUpperCase(), portalId: PORTAL, attachmentId: ATT }),
+    ).not.toThrow();
+  });
 });
 
 describe("storageConfigFromEnv", () => {

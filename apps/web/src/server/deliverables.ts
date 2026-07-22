@@ -25,7 +25,14 @@ import {
 
 /** Upload constraints (§33 validation). */
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const ALLOWED_MIME_TYPES: readonly string[] = [
+
+/**
+ * Allowlist by BYTES, not by the browser-supplied type. Text formats
+ * (text/plain, text/csv) have no magic bytes, so they are accepted only
+ * when sniffing finds no binary signature AND the content decodes as UTF-8
+ * without control bytes — a renamed .exe cannot pass as .txt.
+ */
+export const ALLOWED_MIME_TYPES: readonly string[] = [
   "application/pdf",
   "image/png",
   "image/jpeg",
@@ -33,6 +40,59 @@ const ALLOWED_MIME_TYPES: readonly string[] = [
   "text/csv",
   "application/zip",
 ];
+
+const SNIFFABLE_ALLOWED: readonly string[] = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "application/zip",
+];
+
+function looksLikePlainText(bytes: Buffer): boolean {
+  const sample = bytes.subarray(0, 8192);
+  // Reject NUL and most C0 control bytes (tab/LF/CR are fine).
+  for (const byte of sample) {
+    if (byte === 0) return false;
+    if (byte < 0x09 || (byte > 0x0d && byte < 0x20)) return false;
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(sample);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the effective content type from the file's actual bytes.
+ * Throws ValidationError when the bytes are not an allowed type or
+ * contradict a declared binary type.
+ */
+export async function resolveAttachmentType(bytes: Buffer, declaredType: string): Promise<string> {
+  const { fileTypeFromBuffer } = await import("file-type");
+  const sniffed = await fileTypeFromBuffer(bytes);
+
+  if (sniffed) {
+    if (!SNIFFABLE_ALLOWED.includes(sniffed.mime)) {
+      throw new ValidationError(
+        `File content is ${sniffed.mime}, which is not allowed (pdf, png, jpeg, txt, csv, zip).`,
+      );
+    }
+    // A declared binary type must agree with the bytes.
+    if (declaredType && SNIFFABLE_ALLOWED.includes(declaredType) && declaredType !== sniffed.mime) {
+      throw new ValidationError(
+        `File contents (${sniffed.mime}) do not match the declared type (${declaredType}).`,
+      );
+    }
+    return sniffed.mime;
+  }
+
+  // No signature: only text is acceptable.
+  if (!looksLikePlainText(bytes)) {
+    throw new ValidationError("File type could not be identified and is not allowed.");
+  }
+  return declaredType === "text/csv" ? "text/csv" : "text/plain";
+}
 
 const log = createLogger({ component: "web.deliverables" });
 
@@ -368,11 +428,8 @@ export async function uploadDeliverableAttachment(
   if (file.bytes.length > MAX_ATTACHMENT_BYTES) {
     throw new ValidationError("Files are limited to 10 MB for the pilot.");
   }
-  if (!ALLOWED_MIME_TYPES.includes(file.type)) {
-    throw new ValidationError(
-      `File type "${file.type}" is not allowed (pdf, png, jpeg, txt, csv, zip).`,
-    );
-  }
+  // Trust the bytes, not the browser-supplied type.
+  const contentType = await resolveAttachmentType(file.bytes, file.type);
   const sha256 = createHash("sha256").update(file.bytes).digest("hex");
   const attachmentId = randomUUID();
   const correlationId = newCorrelationId();
@@ -397,7 +454,7 @@ export async function uploadDeliverableAttachment(
     storageKey = attachmentKey({ organizationId, portalId: deliverable.portalId, attachmentId });
   });
 
-  await getStorage().put(storageKey, file.bytes, file.type);
+  await getStorage().put(storageKey, file.bytes, contentType);
 
   await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const deliverable = await tx.deliverable.findFirst({
@@ -412,7 +469,7 @@ export async function uploadDeliverableAttachment(
         organizationId,
         deliverableId,
         fileName,
-        mimeType: file.type,
+        mimeType: contentType,
         sizeBytes: file.bytes.length,
         sha256,
         storageKey,
@@ -475,17 +532,31 @@ export async function deleteDeliverableAttachment(
   });
 }
 
-/** Internal download: membership + CLEAN scan. */
+/**
+ * Internal download: the attachment must belong to the deliverable named in
+ * the route, the caller must hold deliverable.edit on THAT portal, and the
+ * file must be CLEAN. Membership alone is not enough — otherwise any member
+ * could fetch any portal's file by id.
+ */
 export async function getInternalAttachmentUrl(
   user: SessionUser,
   organizationId: string,
+  portalId: string,
+  deliverableIdentifier: string,
   attachmentId: string,
 ): Promise<string | null> {
   return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
     const context = await loadAuthorizationContext(tx, organizationId, user.id);
     if (!context) return null;
+    if (!hasPermission(context, "deliverable.edit", { organizationId, portalId })) return null;
+
     const attachment = await tx.deliverableAttachment.findFirst({
-      where: { id: attachmentId, organizationId, scanStatus: "CLEAN" },
+      where: {
+        id: attachmentId,
+        organizationId,
+        scanStatus: "CLEAN",
+        deliverable: { portalId, identifier: deliverableIdentifier },
+      },
     });
     if (!attachment) return null;
     return getStorage().signedDownloadUrl(attachment.storageKey, {

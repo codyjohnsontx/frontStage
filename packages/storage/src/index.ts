@@ -49,13 +49,16 @@ export function storageConfigFromEnv(env: Record<string, string | undefined> = p
  * Tenant-scoped storage key (§33): structural isolation, never derived from
  * user input beyond validated UUIDs.
  */
+/** Canonical UUID layout: hex groups in fixed positions, not just length. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function attachmentKey(parts: {
   organizationId: string;
   portalId: string;
   attachmentId: string;
 }): string {
   for (const [name, value] of Object.entries(parts)) {
-    if (!/^[0-9a-f-]{36}$/i.test(value)) throw new Error(`${name} is not a UUID`);
+    if (!UUID_PATTERN.test(value)) throw new Error(`${name} is not a UUID`);
   }
   return `organizations/${parts.organizationId}/portals/${parts.portalId}/attachments/${parts.attachmentId}`;
 }
@@ -75,12 +78,23 @@ export function createS3Storage(config: StorageConfig): ObjectStorage {
     if (bucketReady) return;
     try {
       await client.send(new HeadBucketCommand({ Bucket: config.bucket }));
+      bucketReady = true;
+      return;
     } catch {
-      // Dev convenience (MinIO): create on first use. Production buckets are
-      // provisioned out-of-band; a race here is benign (idempotent create).
-      await client.send(new CreateBucketCommand({ Bucket: config.bucket })).catch(() => undefined);
+      // Fall through to create (dev convenience for MinIO; production
+      // buckets are provisioned out-of-band).
     }
-    bucketReady = true;
+    try {
+      await client.send(new CreateBucketCommand({ Bucket: config.bucket }));
+      bucketReady = true;
+    } catch (err) {
+      // A concurrent creator may have won the race — re-check before giving
+      // up, and never mark ready on an unverified failure.
+      await client.send(new HeadBucketCommand({ Bucket: config.bucket })).catch(() => {
+        throw err;
+      });
+      bucketReady = true;
+    }
   }
 
   return {

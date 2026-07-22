@@ -18,7 +18,8 @@ services:
 
   # S3-compatible object storage for development (attachments).
   minio:
-    image: minio/minio:latest
+    # Pinned release (not :latest) so dev environments are reproducible.
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: frontstage-minio
     command: server /data --console-address ":9001"
     environment:

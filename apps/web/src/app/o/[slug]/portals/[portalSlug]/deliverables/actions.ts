@@ -107,7 +107,9 @@ export async function uploadAttachmentAction(formData: FormData): Promise<void> 
   await attempt(path, "Could not upload the file.", () =>
     uploadDeliverableAttachment(user, org.id, deliverableId, {
       name: file.name,
-      type: file.type || "application/octet-stream",
+      // Pass the declared type through as-is (may be empty); the service
+      // resolves the real type from the bytes and validates it.
+      type: file.type,
       bytes,
     }),
   );
