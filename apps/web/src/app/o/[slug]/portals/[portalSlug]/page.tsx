@@ -95,6 +95,16 @@ export default async function PortalPage({
       </div>
 
       <div className="card">
+        <h2>Deliverables</h2>
+        <p className="muted" style={{ marginBottom: 0 }}>
+          Portal-owned delivery objects with acceptance criteria and frozen versions.{" "}
+          <Link href={`/o/${org.slug}/portals/${portal.slug}/deliverables`}>
+            Manage deliverables →
+          </Link>
+        </p>
+      </div>
+
+      <div className="card">
         <h2>Client requests</h2>
         {requests.length === 0 ? (
           <p className="muted">

@@ -80,11 +80,12 @@ remain correctly separated, with three tested leak boundaries.
 Exit: a client approves an exact version · the approval survives a simulated
 Linear outage · a material change invalidates only the new version.
 
-- ⬜ **3.1 Deliverables + versions** — portal-owned deliverables
-  (identifier, scope, acceptance criteria, internal owner, client
-  approver), source links, lifecycle (Draft → … → Approved → Delivered,
-  kept separate), version history, ready-for-review flow.
-- ⬜ **3.2 Attachments** — object-storage abstraction (S3-compatible,
+- ✅ **3.1 Deliverables + versions** — portal-owned deliverables
+  (identifier, scope, acceptance criteria, internal owner), source links,
+  lifecycle (Draft → … → Approved → Delivered, kept separate), immutable
+  version history frozen at ready-for-review with material content hashes.
+  Client approver assignment moves to 3.3 with the approval flow.
+- 🔜 **3.2 Attachments** — object-storage abstraction (S3-compatible,
   MinIO in dev), explicit publish-to-client copy with hash + immutable
   attachment versions, scan-state seam, short-lived signed URLs,
   tenant-scoped storage keys.

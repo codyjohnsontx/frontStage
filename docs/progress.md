@@ -2,6 +2,58 @@
 
 Honest record of what is actually built and verified. Newest first.
 
+## 2026-07-19 — Slice 3.1: deliverables + frozen versions
+
+**Pending item cleared:** the 16 database RLS integration tests that could
+not run at the end of Slice 2.3 (Docker was down) now pass — full suite green.
+
+**Built:**
+
+- `deliverables` (forced RLS + composite tenant FK to portals):
+  APEX-DEL-NNN identifiers from an atomic per-client counter, client-safe
+  content (title / description / scope / acceptance criteria / target date),
+  internal owner, and the §25 lifecycle.
+- `deliverable_versions`: immutable frozen content, append-only at the
+  database level (select+insert policies + trigger, same posture as
+  audit_events and publication snapshots). A version is frozen on every
+  transition INTO Ready for Review — that exact version is what a client
+  will approve in 3.3. Each version stores a `contentHash` over the §26
+  material fields (scope, acceptance criteria, description), which drives
+  material-change detection in 3.4.
+- `deliverable_source_links`: many source issues can back one client-facing
+  deliverable; internal-only, never rendered client-side.
+- Lifecycle table enforces the brief: Approved and Delivered stay separate
+  (approval ≠ delivery), APPROVED is unreachable from internal transitions
+  (it is the client's action in 3.3), ARCHIVED is terminal, and content is
+  editable only in DRAFT/PLANNED/IN_PROGRESS/CHANGES_REQUESTED — never
+  while frozen for review. Transitions and edits are guarded on the
+  observed status.
+- `deliverableContent()` — fourth leak boundary: internal owner ids/names,
+  creator, and source links are absent from the type, so they cannot reach
+  a client page or a frozen snapshot.
+- Internal UI: deliverables list + editor (content form disabled when
+  frozen, lifecycle buttons from the allowed-transition table, source
+  linking, version history with material hashes). Client UI: deliverables
+  list + detail rendered PURELY from the frozen snapshot, with a
+  placeholder noting version-bound approval arrives next.
+
+**Verified live (scripted HTTP, dev server on :3100):**
+
+1. Created APEX-DEL-001; client saw "Nothing has been shared for review yet"
+   while it was a draft.
+2. Walked Planned → In Progress → Ready for Review; v1 froze with a
+   material hash.
+3. Client list and detail then showed the deliverable with its acceptance
+   criteria; leak sweep found no internal owner, source, or hash fields.
+4. An edit attempt while frozen was rejected server-side ("move it back to
+   In Progress first") and the stored title was unchanged.
+5. `UPDATE deliverable_versions` raised the append-only trigger error.
+6. Changes Requested → Ready for Review froze v2; six audit events recorded
+   across the lifecycle.
+
+**Test suite:** 81 passing (adds deliverable leak-boundary + lifecycle-rule
+tests and 2 deliverable RLS probes including cross-portal FK rejection).
+
 ## 2026-07-18 — Slice 2.3: two-track communication (Phase 2 complete)
 
 **Built:**
