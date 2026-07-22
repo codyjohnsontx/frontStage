@@ -9,7 +9,14 @@ const nextConfig: NextConfig = {
     "@frontstage/integration-core",
     "@frontstage/linear-adapter",
     "@frontstage/observability",
+    "@frontstage/storage",
   ],
+  experimental: {
+    serverActions: {
+      // Attachment uploads (§33): 10 MB file limit + form overhead.
+      bodySizeLimit: "12mb",
+    },
+  },
 };
 
 export default nextConfig;

@@ -25,7 +25,7 @@ describe("deliverableContent — the deliverable leak boundary", () => {
   it("emits only client-safe fields", () => {
     const content = deliverableContent(base);
     expect(Object.keys(content).sort()).toEqual(
-      ["acceptanceCriteria", "description", "identifier", "scope", "targetDate", "title"].sort(),
+      ["acceptanceCriteria", "attachments", "description", "identifier", "scope", "targetDate", "title"].sort(),
     );
   });
 
@@ -65,6 +65,27 @@ describe("materialContentHash", () => {
     expect(
       materialContentHash(deliverableContent({ ...base, targetDate: new Date("2027-01-01") })),
     ).toBe(h);
+  });
+
+  it("published files are material: adding or changing a file changes the hash (§26)", () => {
+    const fileA = { attachmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", fileName: "spec.pdf", sha256: "hash-a" };
+    const fileB = { attachmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", fileName: "spec.pdf", sha256: "hash-b" };
+    const without = materialContentHash(deliverableContent(base));
+    const withA = materialContentHash(deliverableContent(base, [fileA]));
+    expect(withA).not.toBe(without);
+    expect(materialContentHash(deliverableContent(base, [fileB]))).not.toBe(withA);
+    // Renaming a file without changing bytes is NOT material.
+    expect(
+      materialContentHash(deliverableContent(base, [{ ...fileA, fileName: "renamed.pdf" }])),
+    ).toBe(withA);
+  });
+
+  it("attachment order in snapshots is deterministic", () => {
+    const a = { attachmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", fileName: "a", sha256: "1" };
+    const b = { attachmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", fileName: "b", sha256: "2" };
+    expect(deliverableContent(base, [b, a]).attachments).toEqual(
+      deliverableContent(base, [a, b]).attachments,
+    );
   });
 });
 

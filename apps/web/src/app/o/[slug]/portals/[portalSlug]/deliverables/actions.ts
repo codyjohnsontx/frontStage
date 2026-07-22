@@ -8,10 +8,12 @@ import { getMyOrganizationBySlug } from "@/server/organizations";
 import { getPortalBySlug } from "@/server/clients";
 import {
   createDeliverable,
+  deleteDeliverableAttachment,
   getDeliverableInternal,
   setDeliverableSourceLink,
   transitionDeliverable,
   updateDeliverableDraft,
+  uploadDeliverableAttachment,
 } from "@/server/deliverables";
 import { actionErrorMessage } from "@/server/errors";
 
@@ -90,6 +92,34 @@ export async function transitionDeliverableAction(formData: FormData): Promise<v
   const target = String(formData.get("target") ?? "") as DeliverableStatus;
   await attempt(path, "Could not update the status.", () =>
     transitionDeliverable(user, org.id, deliverableId, target),
+  );
+  revalidatePath(path);
+  redirect(path);
+}
+
+export async function uploadAttachmentAction(formData: FormData): Promise<void> {
+  const { user, org, path, deliverableId } = await resolveDeliverable(formData);
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) {
+    redirect(`${path}?error=${encodeURIComponent("Choose a file to upload.")}`);
+  }
+  const bytes = Buffer.from(await file.arrayBuffer());
+  await attempt(path, "Could not upload the file.", () =>
+    uploadDeliverableAttachment(user, org.id, deliverableId, {
+      name: file.name,
+      type: file.type || "application/octet-stream",
+      bytes,
+    }),
+  );
+  revalidatePath(path);
+  redirect(path);
+}
+
+export async function deleteAttachmentAction(formData: FormData): Promise<void> {
+  const { user, org, path } = await resolveDeliverable(formData);
+  const attachmentId = String(formData.get("attachmentId") ?? "");
+  await attempt(path, "Could not remove the file.", () =>
+    deleteDeliverableAttachment(user, org.id, attachmentId),
   );
   revalidatePath(path);
   redirect(path);

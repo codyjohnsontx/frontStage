@@ -47,6 +47,21 @@ export default async function ClientDeliverableDetailPage({
         </div>
       )}
 
+      {content.attachments && content.attachments.length > 0 && (
+        <div className="card">
+          <h2>Files</h2>
+          <ul style={{ marginBottom: 0 }}>
+            {content.attachments.map((a) => (
+              <li key={a.attachmentId}>
+                <a href={`/portal/${portalSlug}/deliverables/${content.identifier}/attachments/${a.attachmentId}`}>
+                  {a.fileName}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {status === "READY_FOR_REVIEW" && (
         <div className="card">
           <h2>Your review</h2>

@@ -15,6 +15,7 @@
     "@frontstage/integration-core": "workspace:*",
     "@frontstage/linear-adapter": "workspace:*",
     "@frontstage/observability": "workspace:*",
+    "@frontstage/storage": "workspace:*",
     "next": "^15.3.0",
     "next-auth": "5.0.0-beta.29",
     "react": "^19.1.0",

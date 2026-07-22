@@ -4,8 +4,12 @@ import {
   withRlsContext,
   type DeliverableStatus,
 } from "@frontstage/database";
+import { createHash, randomUUID } from "node:crypto";
 import { hasPermission } from "@frontstage/authorization";
+import { attachmentKey } from "@frontstage/storage";
 import { createLogger, newCorrelationId } from "@frontstage/observability";
+import { getStorage } from "@/server/storage";
+import { enqueueOutboxEvent } from "@/server/outbox";
 import type { SessionUser } from "@/server/session";
 import { ValidationError } from "@/server/errors";
 import { assertPermission, loadAuthorizationContext } from "@/server/authz";
@@ -15,8 +19,20 @@ import {
   CLIENT_VISIBLE_DELIVERABLE_STATUSES,
   deliverableContent,
   materialContentHash,
+  type AttachmentRef,
   type DeliverableContent,
 } from "@/server/deliverable-view";
+
+/** Upload constraints (§33 validation). */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const ALLOWED_MIME_TYPES: readonly string[] = [
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "text/plain",
+  "text/csv",
+  "application/zip",
+];
 
 const log = createLogger({ component: "web.deliverables" });
 
@@ -209,6 +225,29 @@ export async function transitionDeliverable(
     const freezes = target === "READY_FOR_REVIEW";
     const nextVersion = freezes ? deliverable.currentVersion + 1 : deliverable.currentVersion;
 
+    // Freezing embeds the exact published files; unscanned or blocked files
+    // must be resolved first (§33 scan gate).
+    let attachmentRefs: AttachmentRef[] = [];
+    if (freezes) {
+      const attachments = await tx.deliverableAttachment.findMany({
+        where: { organizationId, deliverableId: deliverable.id },
+      });
+      if (attachments.some((a) => a.scanStatus === "PENDING")) {
+        throw new ValidationError("File scans are still running. Try again in a moment.");
+      }
+      const blocked = attachments.filter((a) => a.scanStatus === "BLOCKED");
+      if (blocked.length > 0) {
+        throw new ValidationError(
+          `Remove blocked file(s) before sharing: ${blocked.map((a) => a.fileName).join(", ")}.`,
+        );
+      }
+      attachmentRefs = attachments.map((a) => ({
+        attachmentId: a.id,
+        fileName: a.fileName,
+        sha256: a.sha256,
+      }));
+    }
+
     // Conditional transition on the observed status.
     const moved = await tx.deliverable.updateMany({
       where: { id: deliverable.id, status: deliverable.status },
@@ -223,7 +262,7 @@ export async function transitionDeliverable(
     }
 
     if (freezes) {
-      const content = deliverableContent(deliverable);
+      const content = deliverableContent(deliverable, attachmentRefs);
       await tx.deliverableVersion.create({
         data: {
           organizationId,
@@ -311,6 +350,190 @@ export async function setDeliverableSourceLink(
   });
 }
 
+/**
+ * Upload a file onto an editable deliverable (§33): validate size + MIME,
+ * hash, copy to tenant-scoped object storage, record the row, then scan
+ * asynchronously through the outbox. Files are never client-reachable until
+ * they are CLEAN and embedded in a frozen version.
+ */
+export async function uploadDeliverableAttachment(
+  user: SessionUser,
+  organizationId: string,
+  deliverableId: string,
+  file: { name: string; type: string; bytes: Buffer },
+): Promise<void> {
+  const fileName = file.name.trim().slice(0, 200);
+  if (!fileName) throw new ValidationError("The file needs a name.");
+  if (file.bytes.length === 0) throw new ValidationError("The file is empty.");
+  if (file.bytes.length > MAX_ATTACHMENT_BYTES) {
+    throw new ValidationError("Files are limited to 10 MB for the pilot.");
+  }
+  if (!ALLOWED_MIME_TYPES.includes(file.type)) {
+    throw new ValidationError(
+      `File type "${file.type}" is not allowed (pdf, png, jpeg, txt, csv, zip).`,
+    );
+  }
+  const sha256 = createHash("sha256").update(file.bytes).digest("hex");
+  const attachmentId = randomUUID();
+  const correlationId = newCorrelationId();
+
+  // Upload to storage BEFORE the DB transaction: an orphaned object on
+  // rollback is harmless; a DB row without bytes is not.
+  let storageKey = "";
+  await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
+    const context = await loadAuthorizationContext(tx, organizationId, user.id);
+    if (!context) throw new ValidationError("Not a member of this organization.");
+    const deliverable = await tx.deliverable.findFirst({
+      where: { id: deliverableId, organizationId },
+    });
+    if (!deliverable) throw new ValidationError("Deliverable not found.");
+    assertPermission(context, "deliverable.edit", {
+      organizationId,
+      portalId: deliverable.portalId,
+    });
+    if (!isEditableStatus(deliverable.status)) {
+      throw new ValidationError("Files can only change while the deliverable is editable.");
+    }
+    storageKey = attachmentKey({ organizationId, portalId: deliverable.portalId, attachmentId });
+  });
+
+  await getStorage().put(storageKey, file.bytes, file.type);
+
+  await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
+    const deliverable = await tx.deliverable.findFirst({
+      where: { id: deliverableId, organizationId },
+    });
+    if (!deliverable || !isEditableStatus(deliverable.status)) {
+      throw new ValidationError("This deliverable changed state during upload. Try again.");
+    }
+    await tx.deliverableAttachment.create({
+      data: {
+        id: attachmentId,
+        organizationId,
+        deliverableId,
+        fileName,
+        mimeType: file.type,
+        sizeBytes: file.bytes.length,
+        sha256,
+        storageKey,
+        uploadedById: user.id,
+      },
+    });
+    await recordAuditEvent(tx, {
+      organizationId,
+      actorUserId: user.id,
+      action: "deliverable.attachment_uploaded",
+      resourceType: "deliverable_attachment",
+      resourceId: attachmentId,
+      correlationId,
+      metadata: { identifier: deliverable.identifier, fileName, sha256, sizeBytes: file.bytes.length },
+    });
+    await enqueueOutboxEvent(tx, {
+      organizationId,
+      eventType: "attachment.uploaded",
+      correlationId,
+      payload: { attachmentId },
+    });
+  });
+  log.info("attachment_uploaded", { organizationId, attachmentId, correlationId });
+}
+
+export async function deleteDeliverableAttachment(
+  user: SessionUser,
+  organizationId: string,
+  attachmentId: string,
+): Promise<void> {
+  const correlationId = newCorrelationId();
+  await withRlsContext(getPrisma(), { organizationId }, async (tx) => {
+    const context = await loadAuthorizationContext(tx, organizationId, user.id);
+    if (!context) throw new ValidationError("Not a member of this organization.");
+    const attachment = await tx.deliverableAttachment.findFirst({
+      where: { id: attachmentId, organizationId },
+      include: { deliverable: true },
+    });
+    if (!attachment) throw new ValidationError("Attachment not found.");
+    assertPermission(context, "deliverable.edit", {
+      organizationId,
+      portalId: attachment.deliverable.portalId,
+    });
+    if (!isEditableStatus(attachment.deliverable.status)) {
+      throw new ValidationError("Files can only change while the deliverable is editable.");
+    }
+    // Row goes; the stored object stays for frozen-version history (§34 —
+    // published bytes referenced by an earlier version must remain
+    // downloadable). Orphan cleanup is a retention concern, not deletion.
+    await tx.deliverableAttachment.delete({ where: { id: attachment.id } });
+    await recordAuditEvent(tx, {
+      organizationId,
+      actorUserId: user.id,
+      action: "deliverable.attachment_removed",
+      resourceType: "deliverable_attachment",
+      resourceId: attachment.id,
+      correlationId,
+      metadata: { identifier: attachment.deliverable.identifier, fileName: attachment.fileName },
+    });
+  });
+}
+
+/** Internal download: membership + CLEAN scan. */
+export async function getInternalAttachmentUrl(
+  user: SessionUser,
+  organizationId: string,
+  attachmentId: string,
+): Promise<string | null> {
+  return withRlsContext(getPrisma(), { organizationId }, async (tx) => {
+    const context = await loadAuthorizationContext(tx, organizationId, user.id);
+    if (!context) return null;
+    const attachment = await tx.deliverableAttachment.findFirst({
+      where: { id: attachmentId, organizationId, scanStatus: "CLEAN" },
+    });
+    if (!attachment) return null;
+    return getStorage().signedDownloadUrl(attachment.storageKey, {
+      fileName: attachment.fileName,
+    });
+  });
+}
+
+/**
+ * Client download: portal membership + the attachment must be embedded in
+ * the LATEST frozen version of a client-visible deliverable + CLEAN scan.
+ * A file uploaded after the freeze is not client-reachable until re-frozen.
+ */
+export async function getClientAttachmentUrl(
+  user: SessionUser,
+  portalSlug: string,
+  deliverableIdentifier: string,
+  attachmentId: string,
+): Promise<string | null> {
+  return withRlsContext(getPrisma(), { userId: user.id }, async (tx) => {
+    const access = await resolveAccessByUserId(tx, user.id, portalSlug);
+    if (!access) return null;
+    await setRlsContext(tx, { organizationId: access.organizationId });
+    const deliverable = await tx.deliverable.findFirst({
+      where: {
+        organizationId: access.organizationId,
+        portalId: access.portalId,
+        identifier: deliverableIdentifier,
+        archivedAt: null,
+        status: { in: CLIENT_VISIBLE_DELIVERABLE_STATUSES as DeliverableStatus[] },
+        currentVersion: { gt: 0 },
+      },
+      include: { versions: { orderBy: { version: "desc" }, take: 1 } },
+    });
+    if (!deliverable || deliverable.versions.length === 0) return null;
+    const snapshot = deliverable.versions[0]!.snapshot as unknown as DeliverableContent;
+    if (!snapshot.attachments?.some((a) => a.attachmentId === attachmentId)) return null;
+
+    const attachment = await tx.deliverableAttachment.findFirst({
+      where: { id: attachmentId, organizationId: access.organizationId, scanStatus: "CLEAN" },
+    });
+    if (!attachment) return null;
+    return getStorage().signedDownloadUrl(attachment.storageKey, {
+      fileName: attachment.fileName,
+    });
+  });
+}
+
 export interface DeliverablePermissions {
   canCreate: boolean;
   canEdit: boolean;
@@ -367,6 +590,7 @@ export async function getDeliverableInternal(
         internalOwner: { select: { name: true, email: true } },
         versions: { orderBy: { version: "desc" } },
         sourceLinks: { include: { sourceObject: true } },
+        attachments: { orderBy: { createdAt: "asc" } },
       },
     });
     if (!deliverable) return null;

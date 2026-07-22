@@ -85,11 +85,11 @@ Linear outage · a material change invalidates only the new version.
   lifecycle (Draft → … → Approved → Delivered, kept separate), immutable
   version history frozen at ready-for-review with material content hashes.
   Client approver assignment moves to 3.3 with the approval flow.
-- 🔜 **3.2 Attachments** — object-storage abstraction (S3-compatible,
-  MinIO in dev), explicit publish-to-client copy with hash + immutable
-  attachment versions, scan-state seam, short-lived signed URLs,
-  tenant-scoped storage keys.
-- ⬜ **3.3 Version-bound approval** — approval statement + optional
+- ✅ **3.2 Attachments** — object-storage abstraction (S3-compatible,
+  MinIO in dev), uploads hashed and embedded in frozen versions (published
+  files are material), simulated scan seam with a freeze gate, short-lived
+  signed URLs, tenant-scoped storage keys.
+- 🔜 **3.3 Version-bound approval** — approval statement + optional
   conditions/comment, records identity/membership/auth context/version
   hash, commits atomically with audit + outbox, Linear comment side effect
   with "approval recorded / Linear sync pending" UI, retry surface.

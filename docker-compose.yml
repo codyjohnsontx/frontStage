@@ -16,6 +16,25 @@ services:
       timeout: 3s
       retries: 10
 
+  # S3-compatible object storage for development (attachments).
+  minio:
+    image: minio/minio:latest
+    container_name: frontstage-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: frontstage
+      MINIO_ROOT_PASSWORD: frontstage_dev_storage
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # Local email capture for development (invitations, notifications).
   mailpit:
     image: axllent/mailpit:latest
@@ -26,3 +45,4 @@ services:
 
 volumes:
   postgres-data:
+  minio-data:
