@@ -13,6 +13,7 @@ import {
 } from "./email.js";
 import { processWebhookEvent, syncConnection } from "./sources.js";
 import { processAddLinearComment, processCreateLinearIssue } from "./requests.js";
+import { processScanAttachment } from "./attachments.js";
 
 const POLL_INTERVAL_MS = 1000;
 const SWEEP_INTERVAL_MS = 60_000;
@@ -26,6 +27,7 @@ const outboxRoutes: Record<string, string> = {
   "request.created": "linear.create_issue",
   "request.message.created": "linear.add_comment",
   "notify.request_update": "email.request_update",
+  "attachment.uploaded": "attachment.scan",
 };
 
 const jobHandlers: Record<string, JobHandler> = {
@@ -58,6 +60,10 @@ const jobHandlers: Record<string, JobHandler> = {
   "linear.add_comment": async (data, { correlationId }) => {
     const parsed = z.object({ messageId: z.string().uuid() }).parse(data);
     await processAddLinearComment(getPrisma(), log.child({ correlationId }), parsed.messageId);
+  },
+  "attachment.scan": async (data, { correlationId }) => {
+    const parsed = z.object({ attachmentId: z.string().uuid() }).parse(data);
+    await processScanAttachment(getPrisma(), log.child({ correlationId }), parsed.attachmentId);
   },
   "email.request_update": async (data, { correlationId }) => {
     const parsed = notificationEmailPayload.parse(data);

@@ -2,6 +2,50 @@
 
 Honest record of what is actually built and verified. Newest first.
 
+## 2026-07-21 — Slice 3.2: attachments with scan gate and signed URLs
+
+**Built:**
+
+- `@frontstage/storage`: provider-agnostic object storage (§40) with one
+  S3-compatible implementation (MinIO in dev via docker-compose, any
+  managed S3 store in prod). Tenant-scoped keys
+  (`organizations/{org}/portals/{portal}/attachments/{id}`) with UUID
+  validation so ids cannot smuggle path traversal. Short-lived signed
+  download URLs (5 min) with sanitized content-disposition.
+- `deliverable_attachments` (forced RLS + composite tenant FK): filename,
+  MIME, size, sha256, storage key, scan status, uploader. Upload validates
+  size (≤10 MB) and a MIME allowlist, stores bytes BEFORE the DB row
+  (orphaned object on rollback is harmless; a row without bytes is not),
+  then scans asynchronously via outbox → `attachment.scan`.
+- Scan seam (§33): the worker's SIMULATED scanner blocks files whose name
+  contains the EICAR marker and clears the rest — a real engine slots in
+  behind the same job. Freezing a version requires all scans resolved and
+  zero blocked files.
+- Frozen versions now embed `{attachmentId, fileName, sha256}` per file,
+  and published files joined the material-hash inputs (§26): changing file
+  BYTES is material; renaming a file is not.
+- Downloads are 302 → signed URL only: internal route requires org
+  membership + CLEAN; client route additionally requires the attachment to
+  be embedded in the LATEST frozen version of a client-visible deliverable
+  — a file uploaded after the freeze is not client-reachable until
+  re-frozen.
+- next.config: server-action body limit raised to 12 MB for uploads.
+
+**Verified live (scripted HTTP, MinIO + worker + web on :3100):**
+
+1. Uploaded dashboard-spec.txt → worker scan CLEAN; row recorded hash
+   f76018e9….
+2. Uploaded eicar-test.txt → scan BLOCKED; freeze rejected with "Remove
+   blocked file(s) before sharing: eicar-test.txt."
+3. Removed the blocked file → freeze succeeded; v3 snapshot embeds the
+   clean file's name and sha256.
+4. Dana saw the Files card and downloaded through the signed-URL route:
+   bytes identical to the upload, sha256 matches the recorded hash.
+5. Unauthenticated download → 401; unknown attachment id → 404.
+
+**Test suite:** 87 passing (storage key/config tests + material-hash-with-
+files and deterministic-order tests).
+
 ## 2026-07-19 — Slice 3.1: deliverables + frozen versions
 
 **Pending item cleared:** the 16 database RLS integration tests that could

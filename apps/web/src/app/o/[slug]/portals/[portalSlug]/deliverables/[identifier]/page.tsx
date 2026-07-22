@@ -11,10 +11,18 @@ import {
 } from "@/server/deliverables";
 import { DELIVERABLE_STATUS_LABELS } from "@/server/deliverable-view";
 import {
+  deleteAttachmentAction,
   toggleSourceLinkAction,
   transitionDeliverableAction,
   updateDeliverableAction,
+  uploadAttachmentAction,
 } from "../actions";
+
+const SCAN_LABELS: Record<string, string> = {
+  PENDING: "scanning…",
+  CLEAN: "clean",
+  BLOCKED: "BLOCKED",
+};
 
 export default async function DeliverableDetailPage({
   params,
@@ -132,6 +140,66 @@ export default async function DeliverableDetailPage({
             </form>
           ))}
         </div>
+      </div>
+
+      <div className="card">
+        <h2>Files</h2>
+        <p className="muted">
+          Files are scanned before they can be shared, and each frozen version records the
+          exact file hashes — an approval covers exact bytes.
+        </p>
+        {d.attachments.length > 0 && (
+          <table style={{ marginBottom: "0.75rem" }}>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Size</th>
+                <th>Scan</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.attachments.map((a) => (
+                <tr key={a.id}>
+                  <td>
+                    {a.scanStatus === "CLEAN" ? (
+                      <a href={`/o/${org.slug}/portals/${portal.slug}/deliverables/${d.identifier}/attachments/${a.id}`}>
+                        {a.fileName}
+                      </a>
+                    ) : (
+                      a.fileName
+                    )}
+                  </td>
+                  <td className="muted">{Math.max(1, Math.round(a.sizeBytes / 1024))} KB</td>
+                  <td>
+                    <span
+                      className="role-tag"
+                      style={a.scanStatus === "BLOCKED" ? { color: "var(--danger)" } : undefined}
+                    >
+                      {SCAN_LABELS[a.scanStatus] ?? a.scanStatus}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {editable && (
+                      <form action={deleteAttachmentAction} style={{ display: "inline" }}>
+                        {hidden}
+                        <input type="hidden" name="attachmentId" value={a.id} />
+                        <button type="submit" className="danger">Remove</button>
+                      </form>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {editable && permissions.canEdit && (
+          <form action={uploadAttachmentAction} className="form-row">
+            {hidden}
+            <input type="file" name="file" required aria-label="File to upload" style={{ flex: 1 }} />
+            <button type="submit" className="secondary">Upload</button>
+          </form>
+        )}
       </div>
 
       <div className="card">
